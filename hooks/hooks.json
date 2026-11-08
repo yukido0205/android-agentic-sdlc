@@ -1,0 +1,17 @@
+{
+  "mobile-skills-guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "write_file|edit_file|run_command|Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ./hooks/scripts/pre-tool-guard.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime / Test artifacts
+progress.log
+issues/
+*.tmp

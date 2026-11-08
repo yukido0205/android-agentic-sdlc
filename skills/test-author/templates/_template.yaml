@@ -1,0 +1,25 @@
+# ac-01-<slug>.yaml
+# Acceptance Criteria: AC-01 <Description of criterion from PRD/plan>
+# Target App: com.example.app
+appId: com.example.app
+---
+# 1. State setup / Navigation to target screen
+- runFlow:
+    file: ../_shared/_login.yaml # or relative helper path
+    optional: true
+
+# 2. Action steps
+- extendedWaitUntil:
+    visible:
+      id: "com.example.app:id/<view_id>"
+    timeout: 10000
+
+- tapOn:
+    id: "com.example.app:id/<view_id>"
+
+# 3. Assertions (Strictly required: verify PRD/AC behavior)
+- assertVisible:
+    text: "<Expected text or title>"
+
+- assertVisible:
+    id: "com.example.app:id/<expected_element_id>"
