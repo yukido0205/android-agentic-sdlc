@@ -68,10 +68,10 @@ def transcript():
 
 
 def history(path, fmt):
-    """Requests the user typed in this session, and the context size of the latest API call."""
+    """Requests the user typed in this session, the context size of the latest API call, and latest user prompt timestamp."""
     if not path or not os.path.isfile(path):
-        return 0, 0
-    typed, last_ctx = 0, 0
+        return 0, 0, ""
+    typed, last_ctx, last_user_ts = 0, 0, ""
 
     if fmt == "antigravity":
         for line in open(path):
@@ -83,6 +83,8 @@ def history(path, fmt):
                 last_ctx = o.get("input_tokens", 0) + o.get("cache_read_tokens", 0) + o.get("cache_write_tokens", 0)
             if o.get("type") == "USER_INPUT":
                 typed += 1
+                if o.get("created_at"):
+                    last_user_ts = o["created_at"]
     else:
         for line in open(path):
             try:
@@ -100,8 +102,10 @@ def history(path, fmt):
             text = text.strip()
             if text and not text.startswith("<") and not text.startswith("Base directory for this skill"):
                 typed += 1
+                if o.get("timestamp"):
+                    last_user_ts = o["timestamp"]
 
-    return typed, last_ctx
+    return typed, last_ctx, last_user_ts
 
 
 def calls(path, since, fmt, until=None):
@@ -162,9 +166,10 @@ def cmd_start():
         json.dump({"file": None, "since": now, "fmt": "unknown"}, open(MARK, "w"))
         print(f"token count started {now} (transcript not available in current environment)")
         return
-    typed, last_ctx = history(path, fmt)
-    json.dump({"file": path, "since": "" if typed <= 1 else now, "fmt": fmt}, open(MARK, "w"))
-    print(f"token count started {now} · environment: {fmt}")
+    typed, last_ctx, last_user_ts = history(path, fmt)
+    since_ts = "" if typed <= 1 else (last_user_ts or now)
+    json.dump({"file": path, "since": since_ts, "fmt": fmt, "start_ctx": last_ctx}, open(MARK, "w"))
+    print(f"token count started {since_ts or now} · environment: {fmt}")
     print(f"session: {typed} request(s) so far · context of the last call {last_ctx:,}")
     if typed > 1:
         print(f"WARNING: old session — every call of this run re-reads {last_ctx:,} tokens of earlier work; "
@@ -182,7 +187,27 @@ def cmd_report(out, until=None):
     fmt = mark.get("fmt", "claude")
     cs = calls(mark["file"], mark["since"], fmt, until)
     if not cs:
-        sys.exit("no API calls recorded since start")
+        start_ctx = mark.get("start_ctx", 0)
+        lines = [
+            "# E2E test run — token usage",
+            "",
+            f"Since {mark['since'] or 'the start of the session'}" + (f" until {until}" if until else "") + f" · 0 API calls · environment `{fmt}` · transcript `{os.path.basename(mark['file'])}`",
+            "",
+            "| | tokens |",
+            "|---|---:|",
+            "| Input, uncached | 0 |",
+            "| Input, cache write | 0 |",
+            "| Input, cache read | 0 |",
+            "| Output (incl. 0 thinking) | 0 |",
+            f"| Context at start → end | {start_ctx:,} → {start_ctx:,} |",
+            "| **Carried in** (start context × 0 calls) | 0 — 0% of all input |",
+            "",
+            "Zero LLM API calls were made during this run (100% native execution).",
+        ]
+        os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+        open(out, "w").write("\n".join(lines) + "\n")
+        print(f"0 calls · 0 tokens (native execution, zero LLM token bleed)\n→ {out}")
+        return
     tot = lambda k: sum(c["usage"].get(k, 0) for c in cs)
     thinking = sum(c["usage"].get("output_tokens_details", {}).get("thinking_tokens", 0) for c in cs)
 

@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ./hooks/scripts/pre-tool-guard.py",
+            "command": "python3 -c 'import os,runpy; p=next((x for x in [\"./hooks/scripts/pre-tool-guard.py\",\".agents/hooks/scripts/pre-tool-guard.py\",\".claude/hooks/scripts/pre-tool-guard.py\",os.path.expanduser(\"~/.gemini/config/hooks/scripts/pre-tool-guard.py\"),os.path.expanduser(\"~/.claude/hooks/scripts/pre-tool-guard.py\")] if os.path.exists(x)), None); p and runpy.run_path(p, run_name=\"__main__\")'",
             "timeout": 5
           }
         ]

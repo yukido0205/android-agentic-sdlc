@@ -606,8 +606,9 @@ def main():
     if args.headless:
         args.open_terminal = False
 
-    # Auto token tracking: start if not already started and not in dry-run
-    if not args.dry_run and not args.no_token_track and not args.open_terminal:
+    # Auto token tracking: start in parent process (before spawning external Terminal) so env vars
+    # like CLAUDECODE / ANTIGRAVITY_CONVERSATION_ID are captured in `.maestro/.run/token-start.json`.
+    if not args.dry_run and not args.no_token_track:
         mark = Path(".maestro/.run/token-start.json")
         if not mark.exists():
             token_script = Path(__file__).with_name("token-usage.py")
