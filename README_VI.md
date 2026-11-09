@@ -69,7 +69,7 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 | Kỹ năng (Skill) | Thư mục | Lệnh kích hoạt / CLI | Nhóm SDLC | Vai trò cốt lõi |
 | :--- | :--- | :--- | :--- | :--- |
 | **`plan-feature`** | `skills/plan-feature` | `/plan-feature <PRD/Brief>` | Plan | Chuyển đổi PRD/Figma sơ sài thành một tài liệu tinh gọn duy nhất `plans/<EPIC>/PLAN.md`. |
-| **`plan-slicing`** | `skills/plan-slicing` | `/plan-slicing init\|plan\|step` | Plan | Chẻ nhỏ Epic thành các lát cắt dọc song song trên Mock ($\le 300$ dòng/MR) qua `CONTRACT.md`. |
+| **`plan-slicing`** | `skills/plan-slicing` | `/plan-slicing init\|plan\|step\|delta` | Plan | Chẻ nhỏ Epic thành các lát cắt dọc song song trên Mock ($\le 300$ dòng/MR) qua `CONTRACT.md` & hấp thụ thay đổi giữa chừng. |
 | **`code-domain`** | `skills/code-domain` | `/code-domain <file>` | Code (Domain) | Bóc tách logic nghiệp vụ thành các UseCase/Entity pure Kotlin, hoàn toàn không dính Android SDK. |
 | **`test-hunter`** | `skills/test-hunter` | `/test-hunter <ticket\|log>` | Test (Chẩn đoán) | Chuyên gia điều tra nguyên nhân gốc (chỉ đọc — không sửa code). Xuất báo cáo `DIAGNOSIS`. |
 | **`guard-blast`** | `skills/guard-blast` | `/guard-blast <target>` | Guard (An toàn) | Tính toán Blast Radius, khóa chặt danh sách file được sửa (Allowlist) và lập ma trận regression. |
@@ -254,9 +254,9 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
 ---
 
-### 5.2. `plan-slicing` — Quy Hoạch Cuốn Chiếu 3 Tầng (JIT) & Chẻ Lát Cắt Dọc
-- **Khi nào sử dụng:** Khi cần chia nhỏ các User Stories của một Epic thành các lát cắt dọc độc lập ($\le 300$ dòng code/MR) mà không bắt AI phải quét và lập kế hoạch chi tiết cho toàn bộ Epic cùng lúc (tránh loãng ngữ cảnh và hallucination).
-- **Lệnh kích hoạt / Cú pháp (3 Tầng Session Độc Lập — Lưu trạng thái vào File, `/clear` giữa mỗi tầng):**
+### 5.2. `plan-slicing` — Quy Hoạch Cuốn Chiếu 3 Tầng (JIT), Chẻ Lát Cắt Dọc & Hấp Thụ Thay Đổi Giữa Chừng
+- **Khi nào sử dụng:** Khi cần chia nhỏ các User Stories của một Epic thành các lát cắt dọc độc lập ($\le 300$ dòng code/MR) mà không bắt AI phải quét và lập kế hoạch chi tiết cho toàn bộ Epic cùng lúc, hoặc khi cần xử lý thay đổi PRD/Figma/BE giữa chừng mà không làm đứt mạch tập trung của lập trình viên đang code dở step.
+- **Lệnh kích hoạt / Cú pháp (3 Tầng Session Độc Lập + Chế độ `delta` 2 nhịp):**
   ```bash
   # Tầng 1 (Session của Lead): Chốt CONTRACT.md & bảng Slices Overview (NOT PLANNED), sau đó /clear
   /plan-slicing init ORDER-DISCOUNT
@@ -266,8 +266,11 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
   # Tầng 3 (Mỗi Step 1 Fresh Session riêng): Tự quét code của riêng step-01, lên micro-plan, code, test & tạo MR, sau đó /clear
   /plan-slicing step slice-01 step-01
+
+  # Thay đổi giữa chừng (Chạy ở ranh giới /clear sau khi xong step đang dở): Đánh giá Impact/Complexity -> cập nhật Plan/Contract -> thêm Delta Step
+  /plan-slicing delta ORDER-DISCOUNT
   ```
-- **Đầu vào:** `plans/<EPIC>/PLAN.md`.
+- **Đầu vào:** `plans/<EPIC>/PLAN.md` (kèm thay đổi từ PRD/Figma/BE khi chạy `delta`).
 - **Đầu ra:** File hợp đồng `plans/<EPIC>/CONTRACT.md` (interface, mock DTOs) và danh sách các bước lát cắt trực tiếp trong `plans/<EPIC>/PLAN.md §4` (Kiến trúc 2-File tinh gọn).
 
 ---

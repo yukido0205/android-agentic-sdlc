@@ -1,39 +1,61 @@
 ---  
 name: guard-blast  
-description: Analyzes PRD/design delta or bug fix blast radius, establishes strict allowlists, and derives high-signal regression test matrices to prevent regressions and context drift.  
-version: 2.0.0  
-tags: [guard-blast, blast-radius, regression-testing, bug-fixing, scope-control]
+description: Analyzes PRD/design/BE delta or bug fix blast radius with Focus-First 2-Speed Triage, establishes strict allowlists, and derives high-signal regression test matrices to prevent regressions and context drift.  
+version: 2.1.0  
+tags: [guard-blast, blast-radius, regression-testing, bug-fixing, scope-control, change-management]
 ---  
   
 # Guard Blast & Regression Guard
 
-Acts as a defensive guardrail against AI hallucination, unwarranted refactoring, and regression bugs. Operates in two distinct modes:
-- **Mode 1: Spec / Design Delta** — for mid-flight PRD or Figma requirement changes.
+Acts as a defensive guardrail against AI hallucination, human context-switching fatigue, unwarranted refactoring, and regression bugs. Operates in two distinct modes:
+- **Mode 1: Spec, Design & BE Delta (Focus-First Change Management)** — for mid-flight PRD, Figma, or Backend API requirement changes during feature slicing.
 - **Mode 2: Bug Fix Blast Radius & Regression Guard** — for `flow-bug` post-diagnosis to isolate impact and guarantee system stability.
 
 ---
 
-## Mode 1: Spec & Design Delta (Mid-flight Requirements Change)
+## Mode 1: Spec, Design & BE Delta (Mid-flight Requirements Change)
 
-Used when product requirements (PRD) or Figma designs change during feature development.
+Used when product requirements (PRD), Figma designs, or Backend API specs change during `/plan-slicing` execution. To prevent human context-switching fatigue, Mode 1 enforces a **2-Speed Focus-First Protocol** (*Speed 1: Mid-Step Quick Triage* vs *Speed 2: Session-Boundary Assessment*).
 
-### Phase 1: Delta Isolation & Strategy
+### Speed 1: Mid-Step Quick Triage (≤ 30s — When a Step is `IN PROGRESS`)
+When a requirement/design/BE change arrives while the developer is actively coding `<current-step>` (`Status: IN PROGRESS`), **DO NOT** run a full-epic impact analysis or force a context switch. Answer one question only:
+> *"Does this change directly invalidate the exact lines of code being written in `<current-step>` right now?"*
+
+- **🟢 NO (Does NOT block `<current-step>` — 85% of cases):**
+  - **Park & Defer (Zero Context Switch):** Log a 1-line row under `PLAN.md §2 Pending Spec / Design / BE Deltas` (`Status: Queued for next /clear`).
+  - Instruct the developer: *"Safe to ignore right now. Finish and merge `<current-step>` first, then run `/clear` and `/plan-slicing delta <EPIC>`."*
+- **🟡 YES — Trivial Local Tweak (Fits inside `<current-step>` within ≤ 300-line diff budget):**
+  - Absorb in-place into `<current-step>`'s AC and continue coding without switching sessions.
+- **🔴 YES — Breaking Collision (Invalidates `<current-step>`'s core premise or exceeds 300-line budget):**
+  - **Safe Abort:** Stop coding `<current-step>`. Instruct the developer to `git stash` (or discard draft branch), mark `<current-step>` as `BLOCKED` (or revert to `TODO`), run `/clear`, and invoke Speed 2 in a fresh session.
+
+### Speed 2: Session-Boundary Assessment (`Plan → Execute → Regression` at `/clear`)
+Run **only** in a fresh session between steps (or via `/plan-slicing delta <EPIC>`) when cognitive load is zero:
+
 1. **Delta Isolation (Diffing):**
-   Compare previous vs new specifications:
-   | Change Item | Previous Spec | New Spec | Type (UI / Logic / Data / Contract) |
-   |---|---|---|---|
-   | ... | ... | ... | ... |
+   Compare previous vs new specifications across PRD, Figma, and BE API:
+   | Delta ID | Change Item | Previous Spec | New Spec | Layer (`UI` / `Logic` / `Data` / `Contract`) | Affected Slices & Steps (`NOT PLANNED` / `TODO` / `DONE`) |
+   |---|---|---|---|---|---|
+   | `delta-01` | ... | ... | ... | ... | ... |
 
-2. **Complexity Assessment:**
-   - **Trivial (Low):** Text/color tweaks, single field addition without state side effects.
-   - **Moderate (Medium):** State transition updates, modified ViewModel logic within an isolated screen.
-   - **Complex (High):** Breaking contract changes, database schema migration, multi-screen navigation overhaul (requires vertical slicing).
+2. **Complexity Assessment & Strategy Definition:**
+   Classify each delta and assign a deterministic execution strategy:
+   | Complexity | Trigger Criteria | Execution Strategy |
+   |---|---|---|
+   | **Level 1: Trivial (Low)** | Copy/color tweaks, single field addition with no state side effects, or changes hitting only `NOT PLANNED` / `TODO` steps. | **In-Place Plan Update:** Do not touch `CONTRACT.md`. Update AC lines directly in `PLAN.md §3–4` for `TODO` steps. If hitting a `DONE` step, append a micro patch step (`step-05b`, ≤ 100 lines). |
+   | **Level 2: Moderate (Medium)** | Isolated ViewModel logic, state transition, or slice-private API payload changes affecting a `DONE` step within 1 slice. | **Delta Step Injection:** Never rewrite `DONE` steps. Mark superseded AC as `[Superseded by delta-NN]`. Append a new step (`step-06: Adapt to <delta-NN>`, 1 MR ≤ 300 lines) at the end of the slice with a strict **Direct Impact Allowlist**. |
+   | **Level 3: Complex (High)** | Breaking shared models/interfaces in `CONTRACT.md`, DB schema migration, or multi-slice navigation overhaul. | **Contract Bump & Re-Slice:** Bump `CONTRACT.md` version + Amendment Log + `FakeRepository`. Mark obsolete unmerged steps `VOID`. Schedule dedicated ` git revert` + adaptation steps for `DONE` work, or defer new scope to `PLAN.md §5 Phase 2`. |
 
-3. **Re-sweep Finished Work:**
-   For every delta row, grep existing code and completed AC lines. Re-verify each against the new spec. Any expectation that changed is rewritten and flagged `[flow ✎]`. If a delta reverses earlier work, revert the earlier commit rather than layering over.
+3. **Re-sweep Finished Work (`DONE` Steps):**
+   For every delta row touching a `DONE` step, grep existing code and completed AC lines. Re-verify each against the new spec. Flag altered expectations with `[Superseded by delta-NN]`. If a delta reverses earlier merged work, require a clean revert commit in the new delta step rather than layering dead code over it.
 
-4. **Allowlist & Execution Plan:**
-   Produce target file list (allowlist), ordered implementation steps, and explicit constraints.
+4. **Allowlist & 3-Tier Regression Plan (Hand-off to `plan-slicing`):**
+   - Lock the **Direct Impact Allowlist** (exact 3–5 files the delta step is permitted to touch).
+   - Define the **3-Tier Regression Matrix** to be executed by `test-runner -m regression` during the delta step:
+     - **Tier 1 (Updated AC):** New/updated Maestro or unit tests proving the changed requirement.
+     - **Tier 2 (Downstream Consumers):** Other slices/screens consuming the updated `CONTRACT.md` or shared state.
+     - **Tier 3 (Prior `DONE` Invariants):** Existing tests from `step-01..step-0N` of the slice to prove zero regression on previously merged steps.
+   - Present the **Gate 1 Delta Briefing** (Delta table + Complexity + Strategy + Allowlist) for human approval before modifying `PLAN.md` or `CONTRACT.md`.
 
 ---
 

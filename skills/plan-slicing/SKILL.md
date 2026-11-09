@@ -54,6 +54,7 @@ Files are kept strictly within `PLAN.md` and `CONTRACT.md`.
 | `init <EPIC>` | Tech Lead (Session 1) | `/plan-slicing init <EPIC>` | `CONTRACT.md` + appends high-level `§4 Slices Overview` table (`Status: NOT PLANNED`) to `PLAN.md` | Individual step breakdowns for slices. **Ends with `/clear`.** |
 | `plan <slice-id>` | Slice Owner (Session 2) | `/plan-slicing plan <slice-id>` | High-level step ladder (`step-01..step-05`: Goal + AC only) for **that 1 slice** under `PLAN.md §4` | Premature file-level tasks or other slices' steps. **Ends with `/clear`.** |
 | `step <slice-id> <step-id>` | Step Dev (Fresh Session per Step) | `/plan-slicing step <slice-id> <step-id>` | Scans code for `<step-id>` only → writes JIT micro-tasks → codes `<step-id>` → updates `PLAN.md §4` | Code or detailed plans for the next step. **Ends with `/clear`.** |
+| `delta <EPIC>` | Lead / Slice Dev (At `/clear` boundary) | `/plan-slicing delta <EPIC>` (or mid-step change alert) | **Mid-step:** Queues non-blocking change in `PLAN.md §2` (0 context switch). **Between steps:** Runs `guard-blast` Mode 1 (`Plan → Strategy`) and updates `CONTRACT.md` / `PLAN.md §4` | Never interrupts an `IN PROGRESS` step unless directly colliding; never overwrites `DONE` steps. |
 | `update` | Any | "step-02 in review / merged / blocked", "question-04 answered" | Updates affected rows in `PLAN.md` | — |
 | `progress` | Any | `/plan-slicing progress <EPIC>` | Nothing — reads `PLAN.md §4` and verifies against git | — |
 
@@ -118,6 +119,27 @@ Run in a **dedicated fresh session** for a single step (`<step-id>`):
 - Status lifecycle: `TODO` → `IN PROGRESS` → `REVIEWING` (MR open) → `DONE` (merged).
 - Tick step in `PLAN.md §4` only on merge, with commit hash verified from git tree.
 
+### Step 5 — Mid-Flight Change Management (`delta <EPIC>` — Focus-First 2-Speed Protocol)
+
+Never re-run `/plan-feature` or `/plan-slicing init` from scratch when PRD, Figma, or BE API changes mid-sprint, and **never force the developer to switch context while a step is `IN PROGRESS`**. Invoke `guard-blast` (Mode 1: Spec, Design & BE Delta) across two speeds:
+
+1. **Speed 1 — Mid-Step Shock Absorber (When a step is `IN PROGRESS`, ≤ 30s):**
+   - Check only whether the incoming change directly invalidates the code being written in `<current-step>`.
+   - **No collision (85% of cases):** Park a 1-line entry in `PLAN.md §2 Pending Spec / Design / BE Deltas` (`Status: Queued for next /clear`). Instruct the developer to finish and merge `<current-step>` first with **zero context switch**.
+   - **Trivial local tweak (fits in `<current-step>` ≤ 300 lines):** Absorb into `<current-step>` AC in-place.
+   - **Direct breaking collision:** Stop `<current-step>`, `git stash` / mark `BLOCKED`, run `/clear`, and move to Speed 2.
+2. **Speed 2 — Session-Boundary `Plan → Execute → Regression` (In a fresh `/clear` session via `/plan-slicing delta <EPIC>`):**
+   - **Phase 1: PLAN (Impact + Complexity → Strategy via `guard-blast` Mode 1):**
+     - Diff old vs new PRD/Figma/BE spec and classify complexity:
+       - *Level 1 (Trivial / Unbuilt):* Edit `TODO` / `NOT PLANNED` step ACs in-place in `PLAN.md §4`.
+       - *Level 2 (Moderate / Isolated `DONE` Step):* Keep `DONE` steps immutable (mark superseded AC as `[Superseded by delta-NN]`). Append a new delta step (`step-06: Adapt to <delta-NN>`, ≤ 300 lines) to the slice with a strict **Direct Impact Allowlist**.
+       - *Level 3 (Complex / Shared Contract):* Bump `CONTRACT.md` version + Amendment Log + `FakeRepository`, mark obsolete unmerged steps `VOID`, and schedule delta steps (or defer to `PLAN.md §5 Phase 2`).
+     - Pause at **Gate 1 (Delta Strategy Approval)** before updating `PLAN.md` / `CONTRACT.md`, then `/clear`.
+   - **Phase 2: EXECUTE (Scoped Delta Step):**
+     - Run `/plan-slicing step <slice-id> <delta-step-id>` in a fresh session. Enforce `guard-blast`'s **Direct Impact Allowlist** (`git diff --name-only`) and the ≤ 300-line budget.
+   - **Phase 3: REGRESSION (3-Tier Verification):**
+     - Update Maestro flows via `test-author` if ACs changed, then execute `suite-runner.py -m regression` (`test-runner`) to verify **Tier 1** (updated AC), **Tier 2** (downstream contract consumers), and **Tier 3** (previously `DONE` steps in the slice) at 0 LLM token cost before `/ship-mr`.
+
 ---
 
 ## Iron Rules
@@ -130,6 +152,7 @@ Run in a **dedicated fresh session** for a single step (`<step-id>`):
 6. **One step, one MR, ≤ 300 lines.** Over budget → split the step.
 7. **Verify, don't recall.** A `DONE` step names a verified commit hash.
 8. **Zero Happy Path & Cognitive Load Reduction.** Executive Summary first, concise tables, no filler prose.
+9. **Protect In-Progress Focus & Immutable History.** Never interrupt an `IN PROGRESS` step for non-colliding spec changes (park in `PLAN.md §2` until `/clear`), and never overwrite `DONE` steps (append a delta step instead).
 
 ## References
 

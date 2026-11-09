@@ -44,6 +44,7 @@ Khi các trợ lý AI phát triển phần mềm tiến hóa từ việc gợi �
   1. **Tầng 1 (`init <EPIC>` — Session của Lead):** Tạo `CONTRACT.md` khóa chặt interface/mock dùng chung và lập bảng tổng quan các Slices trong `PLAN.md §4` (`NOT PLANNED`), sau đó xóa ngữ cảnh (`/clear`).
   2. **Tầng 2 (`plan <slice-id>` — Session của người nhận Slice):** Ai nhận Slice nào mới mở session riêng chạy `plan` cho **đúng 1 Slice đó** (ví dụ `slice-01`), chia ra khung 3–5 bước (`step-01..step-05`: chỉ gồm Mục tiêu + Tiêu chí nghiệm thu AC), sau đó `/clear`.
   3. **Tầng 3 (`step <slice-id> <step-id>` — Mỗi Step 1 Session Riêng = 1 MR):** Khi bắt tay vào làm Step nào (ví dụ `step-01`), dev mở một session mới tinh. Lúc này AI mới quét các file code liên quan đến `step-01`, tự lên micro-plan chi tiết và code gọn trong $\le 300$ dòng/MR.
+  4. **Hấp thụ thay đổi giữa chừng (`delta <EPIC>` — Giao thức 2 Nhịp Bảo Vệ Sự Tập Trung):** Khi PRD, Figma hoặc BE thay đổi giữa sprint, nếu không va chạm trực diện với step đang `IN PROGRESS`, hệ thống chỉ cất vào hàng chờ trong `PLAN.md §2` (**0 Context Switch**), đợi tới khi dev xong step hiện tại và gõ `/clear` mới kích hoạt `guard-blast` Mode 1 (`Plan → Execute → Regression`).
 
 ### 3.3. `code-domain` — Cô Lập Nghiệp Vụ Khỏi Code Legacy & Ngăn Chặn Hallucination
 - **Nỗi đau thực tế:** Trong các codebase Android cũ, các "God Activity" hay ViewModel dài hơn 1.500 dòng thường trộn lẫn truy vấn DB, lời gọi Android SDK (`Context`, `SharedPreferences`) và quy tắc nghiệp vụ cốt lõi. Khi AI sửa các class này, nó rất dễ bị hallucination hoặc làm gãy vòng đời Android.
@@ -59,7 +60,7 @@ Khi các trợ lý AI phát triển phần mềm tiến hóa từ việc gợi �
 - **Nỗi đau thực tế:** Khi sửa một lỗi nhỏ hoặc cập nhật thay đổi thiết kế giữa chừng, AI thường sửa lan sang các file không liên quan, dẫn đến lỗi hồi quy ngầm (regressions).
 - **Tại sao skill ra đời:** Thiết lập vành đai bảo vệ nghiêm ngặt xung quanh các thay đổi của hệ thống.
 - **Giải pháp & Giá trị:** Hoạt động ở 2 chế độ:
-  - *Chế độ 1 (Thay đổi spec/thiết kế):* Phân tích delta giữa các phiên bản yêu cầu và rà soát lại các phần đã làm (Re-sweep).
+  - *Chế độ 1 (Thay đổi spec/thiết kế/BE — Triage 2 Nhịp Focus-First):* Bảo vệ sự tập trung khi đang code dở step bằng cách cất các thay đổi không va chạm vào hàng đợi (Nhịp 1); chỉ khi sang ranh giới `/clear` (Nhịp 2) mới đánh giá độ phức tạp (`Level 1` sửa trực tiếp step TODO, `Level 2` chèn step mới vào cuối Slice, `Level 3` nâng cấp `CONTRACT.md`), rà soát lại các phần đã `DONE` mà không xóa lịch sử, và lập ma trận hồi quy 3 tầng.
   - *Chế độ 2 (Phạm vi ảnh hưởng của bug):* Thiết lập danh sách cho phép (**Allowlist**) nghiêm ngặt cho các file được sửa (đối chiếu bằng `git diff --name-only`) và trích xuất ma trận test hồi quy 3 cấp độ (Tier 1 $\to$ Tier 3).
 
 ### 3.6. `test-author` — Tự Động Soạn Thảo Kịch Bản Test Maestro Chuẩn Xác

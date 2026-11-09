@@ -69,7 +69,7 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 | Skill | Directory | Triggers / CLI Command | SDLC Phase | Core Role |
 | :--- | :--- | :--- | :--- | :--- |
 | **`plan-feature`** | `skills/plan-feature` | `/plan-feature <PRD/Brief>` | Plan | Consolidates ambiguous PRDs/Figma into a unified, lean `plans/<EPIC>/PLAN.md`. |
-| **`plan-slicing`** | `skills/plan-slicing` | `/plan-slicing init\|plan\|step` | Plan | Deconstructs Epics into parallel, mockable vertical slices ($\le 300$ lines/MR) via `CONTRACT.md`. |
+| **`plan-slicing`** | `skills/plan-slicing` | `/plan-slicing init\|plan\|step\|delta` | Plan | Deconstructs Epics into parallel, mockable vertical slices ($\le 300$ lines/MR) via `CONTRACT.md` & absorbs mid-flight deltas. |
 | **`code-domain`** | `skills/code-domain` | `/code-domain <file>` | Code (Domain) | Extracts pure Kotlin business logic into UseCases/Entities with zero Android framework dependencies. |
 | **`test-hunter`** | `skills/test-hunter` | `/test-hunter <ticket\|log>` | Test (Diagnosis) | Strictly read-only root cause investigator. Produces diagnostic reports without modifying code. |
 | **`guard-blast`** | `skills/guard-blast` | `/guard-blast <target>` | Guard (Safety) | Computes Blast Radius, locks down an Allowlist of editable files, and derives targeted Regression Matrices. |
@@ -256,9 +256,9 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 9 s
 
 ---
 
-### 5.2. `plan-slicing` — 3-Tier JIT Contract & Ladder Decomposition
-- **When to Use:** When breaking down an epic's User Stories into parallel, reviewable slices ($\le 300$ lines) without causing AI hallucination from scanning the entire epic at once.
-- **Trigger / Commands (3 Isolated Session Tiers — Persist in Files, `/clear` Between Tiers):**
+### 5.2. `plan-slicing` — 3-Tier JIT Contract, Ladder Decomposition & Focus-First Delta Absorption
+- **When to Use:** When breaking down an epic's User Stories into parallel, reviewable slices ($\le 300$ lines) without causing AI hallucination from scanning the entire epic at once, or when absorbing mid-flight PRD/Figma/BE changes without breaking in-progress developer focus.
+- **Trigger / Commands (3 Isolated Session Tiers + Focus-First `delta` Mode):**
   ```bash
   # Tier 1 (Lead Session): Freeze Contract & list high-level Slices Overview (NOT PLANNED), then /clear
   /plan-slicing init ORDER-DISCOUNT
@@ -268,8 +268,11 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 9 s
 
   # Tier 3 (1 Fresh Session Per Step): Scan code for step-01 only, micro-plan tasks, code, verify & ship MR, then /clear
   /plan-slicing step slice-01 step-01
+
+  # Mid-Flight Change (At /clear boundary after finishing current step): Assess delta impact/complexity -> update plan/contract -> schedule delta step
+  /plan-slicing delta ORDER-DISCOUNT
   ```
-- **Inputs:** `plans/<EPIC>/PLAN.md`.
+- **Inputs:** `plans/<EPIC>/PLAN.md` (and updated PRD/Figma/BE specs when running `delta`).
 - **Outputs:** `plans/<EPIC>/CONTRACT.md` (mock interfaces, DTOs) and inline step execution ladders inside `plans/<EPIC>/PLAN.md §4` (Lean 2-File Architecture).
 
 ---

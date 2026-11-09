@@ -120,13 +120,19 @@ TODO → IN PROGRESS → REVIEWING (MR open) → DONE (merged)
 - **Progress reports start from `PLAN.md §4` but verify its ✅s against
   the tree.** The costliest mistakes are records that disagree with reality.
 
-## Maintaining the plans
+## Maintaining the plans & Mid-Flight Change Management (Focus-First)
 
-- **Never rewrite a finished plan.** A contradicting ruling gets a *superseded*
-  banner and a pointer; the original reasoning stays as the record.
-- **New scope gets a new plan folder**, not an edit to a closed slice.
+- **Never interrupt an `IN PROGRESS` step for non-colliding changes (Speed 1 — Park & Defer):**
+  When PRD, Figma, or BE specs change while a developer is coding `<current-step>`, perform a ≤30s collision check. If the change does not invalidate the code currently being typed in `<current-step>`, log a 1-line row in `PLAN.md §2 Pending Spec / Design / BE Deltas` (`Status: Queued for next /clear`) and let the developer finish and merge `<current-step>` without context switching.
+- **Process deltas only at `/clear` session boundaries (Speed 2 — `Plan → Execute → Regression`):**
+  Run `/plan-slicing delta <EPIC>` in a fresh session to invoke `guard-blast` Mode 1:
+  - **Level 1 (Trivial / Unbuilt):** Update `TODO` / `NOT PLANNED` step ACs in-place in `PLAN.md §4`.
+  - **Level 2 (Moderate / Isolated `DONE` Step):** Keep `DONE` steps immutable; mark superseded AC lines with `[Superseded by delta-NN]` and append a new delta step (`step-06: Adapt to <delta-NN>`, ≤ 300 lines) with a strict **Direct Impact Allowlist**.
+  - **Level 3 (Complex / Breaking Contract):** Bump `CONTRACT.md` version + Amendment Log + `FakeRepository`, mark obsolete unmerged steps `VOID`, and schedule delta steps (or push new scope to `PLAN.md §5 Follow-ups & Phase 2`).
+- **Never rewrite a finished plan.** A contradicting ruling or spec delta gets a `[Superseded by delta-NN]` tag and a pointer; the original reasoning and verified commit hash stay as the record.
+- **New scope gets a new plan folder (or `PLAN.md §5`)**, not an edit to a closed slice.
 - **Deferred work has one home:** the `PLAN.md §5 Follow-ups & Phase 2` section.
-- **When an answer arrives, reconcile dependent records** in `PLAN.md §2` and `CONTRACT.md`.
+- **When an answer or delta arrives, reconcile dependent records** in `PLAN.md §2`, `CONTRACT.md`, and the 3-Tier Regression Matrix (Tier 1 updated AC, Tier 2 downstream contract consumers, Tier 3 prior `DONE` invariants).
 - **Split rule (Emergency only):** Only split `PLAN.md` if it exceeds 600 lines, keeping `PLAN.md` as the index and extracting `slices/<TICKET>.md`. Otherwise keep everything in `PLAN.md`.
 
 ## Plan folder layout (Lean 2-File Architecture)

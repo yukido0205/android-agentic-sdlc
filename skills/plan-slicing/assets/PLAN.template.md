@@ -48,6 +48,13 @@
 >
 > *(Client is temporarily proceeding with [A]. If no reply by [Deadline: e.g. 5:00 PM tomorrow], we will lock A to maintain schedule).*`
 
+### Pending Spec / Design / BE Deltas (Focus-First Queue)
+> Mid-step requirement/design/API changes that do NOT directly block the currently `IN PROGRESS` step are parked here first (Speed 1 — Zero Context Switch), then processed at the next `/clear` boundary via `/plan-slicing delta <EPIC>` (Speed 2).
+
+| Delta ID | Source (`PRD` / `Figma` / `BE`) | Summary of Change | Collides with Active Step? | Complexity (`L1` / `L2` / `L3`) | Target Action / Delta Step | Status |
+|---|---|---|---|---|---|---|
+| delta-01 | <e.g. BE API v2> | <short summary> | No (Parked during `step-02`) | <TBD at `/clear`> | <e.g. Update `step-03` AC / Add `step-06`> | Queued for `/clear` |
+
 ---
 
 ## 3 · User Stories & Acceptance Criteria

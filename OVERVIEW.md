@@ -44,6 +44,7 @@ To maximize pragmatism and eliminate tool-call overhead, this repository separat
   1. **Tier 1 (`init <EPIC>` — Lead Session):** Generates a frozen `CONTRACT.md` (shared interfaces/mocks) and a high-level Slices Overview table in `PLAN.md §4` (`NOT PLANNED`), then clears context (`/clear`).
   2. **Tier 2 (`plan <slice-id>` — Slice Owner Session):** Whoever picks up a slice opens a fresh session to cut *only that slice* into a 3–5 step outline (`step-01..step-05`: Goal + AC only), then clears context (`/clear`).
   3. **Tier 3 (`step <slice-id> <step-id>` — 1 Step = 1 Fresh Session = 1 MR):** Each step runs in its own clean session, scanning the codebase just-in-time to micro-plan and code only that step ($\le 300$ lines per MR).
+  4. **Mid-Flight Change Absorption (`delta <EPIC>` — Focus-First 2-Speed Protocol):** When PRD, Figma, or Backend specs change mid-sprint, `plan-slicing` protects developer focus: non-colliding changes arriving during an `IN PROGRESS` step are parked in `PLAN.md §2` with **zero context switch**, and processed only at the next `/clear` session boundary via `guard-blast` Mode 1 (`Plan → Execute → Regression`).
 
 ### 3.3. `code-domain` — Isolating Business Rules from Legacy Code
 - **Real-World Pain Point:** Legacy Android codebases frequently contain 1,500+ line "God Activities" or bloated ViewModels where database queries, Android SDK calls (`Context`, `SharedPreferences`), and crucial domain calculations are tangled together. When prompted to modify or refactor such code, AI agents often hallucinate non-existent Android APIs, misinterpret Android lifecycle states, or introduce subtle regressions.
@@ -59,7 +60,7 @@ To maximize pragmatism and eliminate tool-call overhead, this repository separat
 - **Real-World Pain Point:** When fixing a defect or adapting to a mid-sprint PRD delta, agents often modify adjacent modules that were never intended to be touched, causing silent regressions across the application.
 - **Why the Skill Was Born:** To prevent scope creep and provide a deterministic safety perimeter around changes.
 - **Concrete Solution & Value:** Operates in two modes:
-  - *Mode 1 (Spec/Design Delta):* Analyzes changes between requirement versions and re-sweeps finished work.
+  - *Mode 1 (Spec, Design & BE Delta — Focus-First 2-Speed Triage):* Protects in-progress developer focus by parking non-colliding changes during active steps (Speed 1), then at the `/clear` boundary (Speed 2) assesses delta complexity (`Level 1` in-place update, `Level 2` delta step injection, `Level 3` contract bump), re-sweeps `DONE` work without rewriting history, and derives a 3-Tier Regression Matrix.
   - *Mode 2 (Bug Fix Blast Radius):* Establishes a strict **Allowlist** of editable files (forbidding edits elsewhere) and derives a high-signal regression test matrix based on actual risk tiers (Tier 1 Direct $\to$ Tier 3 System).
 
 ### 3.6. `test-author` — Deterministic Maestro Test Authoring

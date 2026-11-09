@@ -63,7 +63,7 @@ Replaces: <screen being replaced, if any>
   - **Tests & Budget check:** At most one test file per step; `git diff --stat <target> -- . ':!*/res/*'` (≤ 300 lines).
   - **Repeat:** Commit/ship MR via `/ship-mr`, then **run `/clear`** before starting `step-02` in a new session.
 
-### 5. Keep Status Updated
+### 5. Keep Status Updated & Handle Mid-Flight Changes (PRD / Figma / BE)
 
 | Say | Effect |
 |---|---|
@@ -71,6 +71,8 @@ Replaces: <screen being replaced, if any>
 | `slice-01 step-02 merged` | Ticks checkbox, marks `DONE` with commit hash in `PLAN.md §4` |
 | `slice-01 step-03 blocked — missing BE API` | Marks `BLOCKED` with reason in `PLAN.md §4`; dependent steps `ON HOLD` |
 | `question-02 answered: <ruling>` | Updates `PLAN.md §2` and keeps rejected option as history |
+| `"BE/PM changed <X> while I'm in step-02"` | **Speed 1 (Quick Triage):** If it doesn't collide with `step-02`, parks a row in `PLAN.md §2 Pending Deltas` so you finish `step-02` with **zero context switch** |
+| `/plan-slicing delta <EPIC>` | **Speed 2 (At `/clear` boundary):** Runs `guard-blast` Mode 1 (`Plan → Strategy`), updates `CONTRACT.md` / `TODO` steps or appends a `step-06 (Delta + Regression)` for `DONE` steps |
 | `/plan-slicing progress <EPIC>` | Reports step progress directly from `PLAN.md §4` verified against git |
 
 ---
