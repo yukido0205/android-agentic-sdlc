@@ -517,15 +517,64 @@ def run_maestro_flow(maestro_bin, device_id, flow_path, debug_dir):
     }
 
 
-def write_token_report(out_dir):
+def start_token_tracking(track_enabled=True):
+    """Starts or validates token tracking after all preconditions (flows, device, preflight, Maestro) pass.
+
+    Returns a list of warning strings to be logged into progress.log.
+    """
+    if not track_enabled:
+        return []
+    mark = Path(".maestro/.run/token-start.json")
+    # If spawned in an external Terminal by a parent suite-runner, reuse the fresh mark it just wrote
+    if os.environ.get("MAESTRO_TOKEN_MARK_INHERITED") == "1" and mark.exists():
+        try:
+            data = json.loads(mark.read_text(encoding="utf-8"))
+            if data.get("created_at"):
+                return []
+        except Exception:
+            pass
+
+    token_script = Path(__file__).with_name("token-usage.py")
+    if not token_script.exists():
+        msg = f"⚠️ Token tracking not started: script not found at {token_script}"
+        print(msg)
+        return [msg]
+
+    warnings = []
+    try:
+        r = subprocess.run([sys.executable, str(token_script), "start"], capture_output=True, text=True)
+        out_text = (r.stdout or "") + "\n" + (r.stderr or "")
+        if r.returncode != 0:
+            msg = f"⚠️ Token tracking failed to start (exit {r.returncode}): {out_text.strip()}"
+            print(msg)
+            warnings.append(msg)
+        else:
+            for line in out_text.splitlines():
+                line_s = line.strip()
+                if line_s.startswith("WARNING:"):
+                    w_msg = f"⚠️ {line_s}"
+                    print(w_msg)
+                    warnings.append(w_msg)
+    except Exception as e:
+        msg = f"⚠️ Token tracking failed to start: {e}"
+        print(msg)
+        warnings.append(msg)
+    return warnings
+
+
+def write_token_report(out_dir, track_enabled=True):
     """Writes the token report at suite end when a session ran `token-usage.py start`.
 
     Done here rather than left to the session: a backgrounded or --open-terminal run returns at once,
     and the session moves on before the suite ends, so a report left to it gets skipped.
     """
+    if not track_enabled:
+        return ""
     mark = Path(".maestro/.run/token-start.json")
     if not mark.exists():
-        return ""
+        line = "⚠️ No token-start mark — token usage not measured"
+        print(line)
+        return line
     out = out_dir / f"{dt.datetime.now().strftime('%y%m%d-%H%M')}-token-usage.md"
     until = dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
     script = Path(__file__).with_name("token-usage.py")
@@ -606,18 +655,6 @@ def main():
     if args.headless:
         args.open_terminal = False
 
-    # Auto token tracking: start in parent process (before spawning external Terminal) so env vars
-    # like CLAUDECODE / ANTIGRAVITY_CONVERSATION_ID are captured in `.maestro/.run/token-start.json`.
-    if not args.dry_run and not args.no_token_track:
-        mark = Path(".maestro/.run/token-start.json")
-        if not mark.exists():
-            token_script = Path(__file__).with_name("token-usage.py")
-            if token_script.exists():
-                try:
-                    subprocess.run([sys.executable, str(token_script), "start"], capture_output=True, text=True)
-                except Exception:
-                    pass
-
     # Print Configuration Banner for complete visibility
     mode_label = (mode.upper() + (" (auto-detected)" if is_auto_detected else "")) if mode else "CUSTOM"
     term_label = "EXTERNAL TERMINAL" if args.open_terminal else "IN-PROCESS (CURRENT SHELL)"
@@ -633,16 +670,68 @@ def main():
     print(f"   • Filter:    {filter_label}")
     print("=" * 70)
 
+    # Smart target resolution (e.g. plans/<TICKET>/REGRESSION.md -> .maestro/<TICKET>/regression)
+    target_str = args.target
+    p_target = Path(target_str)
+    if p_target.suffix == ".md" or "plans" in p_target.parts or re.match(r"^[A-Z]+-\d+$", target_str, re.IGNORECASE):
+        m_epic = re.search(r"([A-Z]+-\d+)", target_str, re.IGNORECASE)
+        if m_epic:
+            epic_code = m_epic.group(1).upper()
+            cand_reg = Path(f".maestro/{epic_code}/regression")
+            cand_epic = Path(f".maestro/{epic_code}")
+            if "regression" in target_str.lower() and cand_reg.exists():
+                target_str = str(cand_reg)
+                print(f"💡 Resolved plan target to regression suite: {target_str}")
+            elif cand_epic.exists():
+                target_str = str(cand_epic)
+                print(f"💡 Resolved plan target to epic folder: {target_str}")
+
+    # Discover flows before starting token tracking or opening external Terminal
+    flows = find_flows(target_str, args.filter)
+    if not flows:
+        sys.exit(f"No valid YAML flows found in '{args.target}' (resolved='{target_str}', filter='{args.filter or ''}')")
+
+    if args.dry_run:
+        print(f"Discovered {len(flows)} flows in {args.target}:")
+        for i, f in enumerate(flows, start=1):
+            tag_str = f" [{' '.join(f['tags'])}]" if f["tags"] else ""
+            step_str = f" [{f['step_title']}]" if f.get("step_title") else ""
+            print(f"  {i:03d}.{step_str} {f['ac']}: {f['title']}{tag_str} ({f['path']})")
+        sys.exit(0)
+
+    # Detect device & run preflight before starting token tracking or spawning external Terminal
+    device_id = detect_device(args.device)
+
+    if not args.skip_preflight:
+        req_envs = [e.strip() for e in args.require_env.split(",")] if args.require_env else None
+        run_preflight_checks(device_id, args.app_pkg, req_envs, args.mock_gps)
+
+    # Determine Maestro binary
+    maestro_bin = MAESTRO
+    if not os.path.exists(maestro_bin) and not shutil.which("maestro"):
+        sys.exit(f"BLOCKED: Maestro CLI binary not found at '{maestro_bin}' or on PATH. Please install Maestro or verify ~/.maestro/bin/maestro.")
+
+    # Auto token tracking: start only AFTER flows, device, preflight, and Maestro are verified,
+    # and BEFORE spawning external Terminal so CLAUDECODE / ANTIGRAVITY_CONVERSATION_ID env vars are captured.
+    track_tokens = not args.no_token_track
+    token_start_warnings = start_token_tracking(track_tokens)
+
     # If --open-terminal is requested, spawn a new Terminal window on macOS and exit
     if args.open_terminal:
         # Build child arguments, ensuring child runs with --headless to prevent recursive window spawns
         remaining_args = [a for a in sys.argv[1:] if a != "--open-terminal"]
         if "--headless" not in remaining_args and "--no-terminal" not in remaining_args:
             remaining_args.append("--headless")
+        if "--skip-preflight" not in remaining_args:
+            remaining_args.append("--skip-preflight")
         script_path = os.path.abspath(sys.argv[0])
         cwd = os.getcwd()
         quoted_args = " ".join([f'"{a}"' if " " in a else a for a in remaining_args])
-        full_cmd = f'export PATH="{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}:$PATH" && cd "{cwd}" && python3 "{script_path}" {quoted_args}'
+        full_cmd = (
+            f'export MAESTRO_TOKEN_MARK_INHERITED=1 && '
+            f'export PATH="{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}:$PATH" && '
+            f'cd "{cwd}" && python3 "{script_path}" {quoted_args}'
+        )
 
         # Support iTerm2 or macOS Terminal.app based on active environment
         term_program = os.environ.get("TERM_PROGRAM", "").lower()
@@ -684,48 +773,6 @@ def main():
             print(f"👉 Command executing: {full_cmd}")
             return 0
 
-    # Smart target resolution (e.g. plans/<TICKET>/REGRESSION.md -> .maestro/<TICKET>/regression)
-    target_str = args.target
-    p_target = Path(target_str)
-    if p_target.suffix == ".md" or "plans" in p_target.parts or re.match(r"^[A-Z]+-\d+$", target_str, re.IGNORECASE):
-        m_epic = re.search(r"([A-Z]+-\d+)", target_str, re.IGNORECASE)
-        if m_epic:
-            epic_code = m_epic.group(1).upper()
-            cand_reg = Path(f".maestro/{epic_code}/regression")
-            cand_epic = Path(f".maestro/{epic_code}")
-            if "regression" in target_str.lower() and cand_reg.exists():
-                target_str = str(cand_reg)
-                print(f"💡 Resolved plan target to regression suite: {target_str}")
-            elif cand_epic.exists():
-                target_str = str(cand_epic)
-                print(f"💡 Resolved plan target to epic folder: {target_str}")
-
-    # Discover flows
-    flows = find_flows(target_str, args.filter)
-    if not flows:
-        sys.exit(f"No valid YAML flows found in '{args.target}' (resolved='{target_str}', filter='{args.filter or ''}')")
-
-    if args.dry_run:
-        print(f"Discovered {len(flows)} flows in {args.target}:")
-        for i, f in enumerate(flows, start=1):
-            tag_str = f" [{' '.join(f['tags'])}]" if f["tags"] else ""
-            step_str = f" [{f['step_title']}]" if f.get("step_title") else ""
-            print(f"  {i:03d}.{step_str} {f['ac']}: {f['title']}{tag_str} ({f['path']})")
-        sys.exit(0)
-
-    # Detect device
-    device_id = detect_device(args.device)
-
-    # Preflight Health Checks
-    if not args.skip_preflight:
-        req_envs = [e.strip() for e in args.require_env.split(",")] if args.require_env else None
-        run_preflight_checks(device_id, args.app_pkg, req_envs, args.mock_gps)
-
-    # Determine Maestro binary
-    maestro_bin = MAESTRO
-    if not os.path.exists(maestro_bin) and not shutil.which("maestro"):
-        sys.exit(f"BLOCKED: Maestro CLI binary not found at '{maestro_bin}' or on PATH. Please install Maestro or verify ~/.maestro/bin/maestro.")
-
     # Output directory setup
     if args.output_dir:
         out_dir = Path(args.output_dir)
@@ -738,6 +785,10 @@ def main():
     issues_dir = out_dir.parent / "issues" if out_dir.name == "e2e-runs" else out_dir / "issues"
     checkpoint_file = out_dir / "checkpoint.json"
     progress_log = out_dir / f"{dt.datetime.now().strftime('%y%m%d-%H%M')}-progress.log"
+    if token_start_warnings:
+        with open(progress_log, "a", encoding="utf-8") as f:
+            for w in token_start_warnings:
+                f.write(f"{w}\n")
 
     # Checkpoint handling
     checkpoint_data = {"completed": {}, "passed": 0, "failed": 0}
@@ -766,6 +817,7 @@ def main():
     start_suite_time = time.time()
     is_tty = sys.stdout.isatty()
     current_step = ""
+    interrupted = False
 
     # ANSI color codes for rich live Terminal streaming
     CLR_LINE = "\033[2K\r"
@@ -776,111 +828,119 @@ def main():
     C_CYAN = "\033[1;36m" if is_tty else ""
     C_DIM = "\033[2m" if is_tty else ""
 
-    for idx, flow in enumerate(flows, start=1):
-        ac = flow["ac"]
-        title = flow["title"]
-        step_title = flow.get("step_title", "")
-        flow_path = flow["path"]
+    try:
+        for idx, flow in enumerate(flows, start=1):
+            ac = flow["ac"]
+            title = flow["title"]
+            step_title = flow.get("step_title", "")
+            flow_path = flow["path"]
 
-        # Step header banner whenever step/category changes
-        if step_title and step_title != current_step:
-            current_step = step_title
-            banner = f"\n━━━ 📌 {current_step} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            print(f"{C_CYAN}{banner}{C_RESET}" if is_tty else banner, flush=True)
+            # Step header banner whenever step/category changes
+            if step_title and step_title != current_step:
+                current_step = step_title
+                banner = f"\n━━━ 📌 {current_step} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                print(f"{C_CYAN}{banner}{C_RESET}" if is_tty else banner, flush=True)
+                with open(progress_log, "a", encoding="utf-8") as f:
+                    f.write(f"\n{banner}\n")
+
+            step_prefix = f"[{current_step}] " if current_step else ""
+
+            # Check if already completed in resume mode
+            prev_result = checkpoint_data.get("completed", {}).get(flow_path)
+            if args.resume and prev_result and prev_result.get("status") == "PASSED":
+                skip_msg = f"{step_prefix}[{idx:03d}/{total:03d}] ⏩ {ac}: {title} - skipped (already verified)"
+                print(f"{C_DIM}{skip_msg}{C_RESET}" if is_tty else skip_msg, flush=True)
+                continue
+
+            # Real-time ANSI stream: running status
+            if is_tty:
+                print(f"{CLR_LINE}{step_prefix}[{idx:03d}/{total:03d}] {C_YELLOW}🔄 Running {ac}: {title}...{C_RESET}", end="", flush=True)
+            else:
+                print(f"{step_prefix}[{idx:03d}/{total:03d}] 🔄 Running {ac}: {title}...", flush=True)
+
+            # Teardown / Reset before executing flow
+            if not args.no_reset:
+                reset_app_state(args.app_pkg, args.splash_activity, device_id)
+
+            debug_dir = os.path.join(out_dir, "debug", f"{idx:03d}_{ac}")
+            run_res = run_maestro_flow(maestro_bin, device_id, flow_path, debug_dir)
+            duration_s = int(round(run_res["duration"]))
+
+            if run_res["passed"]:
+                verified_count += 1
+                warn_extra = f" {run_res['warning']}" if run_res.get("warning") else ""
+                log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ✅ {ac}: {title} - verified - {verified_count}/{total} [{duration_s}s]{warn_extra}"
+                if is_tty:
+                    print(f"{CLR_LINE}{C_GREEN}{log_line}{C_RESET}", flush=True)
+                else:
+                    print(f"{log_line}", flush=True)
+                checkpoint_data.setdefault("completed", {})[flow_path] = {
+                    "status": "PASSED",
+                    "step": current_step,
+                    "ac": ac,
+                    "title": title,
+                    "duration": duration_s,
+                }
+                checkpoint_data["passed"] = verified_count
+            else:
+                failed_count += 1
+                log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ❌ {ac}: {title} - FAILED [{duration_s}s]"
+                if is_tty:
+                    print(f"{CLR_LINE}{C_RED}{log_line}{C_RESET}", flush=True)
+                else:
+                    print(f"{log_line}", flush=True)
+                
+                # Robust evidence capture & instant issue report generation
+                artifacts = capture_failure_artifacts(device_id, debug_dir, ac)
+                issue_path = generate_issue_report(flow, run_res["error_summary"], artifacts, str(issues_dir))
+                
+                if artifacts.get("screenshot"):
+                    print(f"          ├── 📸 Snapshot: {artifacts['screenshot']}")
+                if artifacts.get("hierarchy"):
+                    print(f"          ├── 🔍 UI Hierarchy: {artifacts['hierarchy']}")
+                print(f"          └── 📝 ISSUE LOGGED: {issue_path}", flush=True)
+
+                checkpoint_data.setdefault("completed", {})[flow_path] = {
+                    "status": "FAILED",
+                    "step": current_step,
+                    "ac": ac,
+                    "title": title,
+                    "duration": duration_s,
+                    "issue": issue_path,
+                    "evidence": artifacts,
+                }
+                checkpoint_data["failed"] = failed_count
+
+            # Append to progress log
             with open(progress_log, "a", encoding="utf-8") as f:
-                f.write(f"\n{banner}\n")
+                f.write(f"{log_line}\n")
 
-        step_prefix = f"[{current_step}] " if current_step else ""
+            # Save checkpoint atomically
+            with open(checkpoint_file, "w", encoding="utf-8") as f:
+                json.dump(checkpoint_data, f, indent=2)
 
-        # Check if already completed in resume mode
-        prev_result = checkpoint_data.get("completed", {}).get(flow_path)
-        if args.resume and prev_result and prev_result.get("status") == "PASSED":
-            skip_msg = f"{step_prefix}[{idx:03d}/{total:03d}] ⏩ {ac}: {title} - skipped (already verified)"
-            print(f"{C_DIM}{skip_msg}{C_RESET}" if is_tty else skip_msg, flush=True)
-            continue
-
-        # Real-time ANSI stream: running status
-        if is_tty:
-            print(f"{CLR_LINE}{step_prefix}[{idx:03d}/{total:03d}] {C_YELLOW}🔄 Running {ac}: {title}...{C_RESET}", end="", flush=True)
-        else:
-            print(f"{step_prefix}[{idx:03d}/{total:03d}] 🔄 Running {ac}: {title}...", flush=True)
-
-        # Teardown / Reset before executing flow
-        if not args.no_reset:
-            reset_app_state(args.app_pkg, args.splash_activity, device_id)
-
-        debug_dir = os.path.join(out_dir, "debug", f"{idx:03d}_{ac}")
-        run_res = run_maestro_flow(maestro_bin, device_id, flow_path, debug_dir)
-        duration_s = int(round(run_res["duration"]))
-
-        if run_res["passed"]:
-            verified_count += 1
-            warn_extra = f" {run_res['warning']}" if run_res.get("warning") else ""
-            log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ✅ {ac}: {title} - verified - {verified_count}/{total} [{duration_s}s]{warn_extra}"
-            if is_tty:
-                print(f"{CLR_LINE}{C_GREEN}{log_line}{C_RESET}", flush=True)
-            else:
-                print(f"{log_line}", flush=True)
-            checkpoint_data.setdefault("completed", {})[flow_path] = {
-                "status": "PASSED",
-                "step": current_step,
-                "ac": ac,
-                "title": title,
-                "duration": duration_s,
-            }
-            checkpoint_data["passed"] = verified_count
-        else:
-            failed_count += 1
-            log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ❌ {ac}: {title} - FAILED [{duration_s}s]"
-            if is_tty:
-                print(f"{CLR_LINE}{C_RED}{log_line}{C_RESET}", flush=True)
-            else:
-                print(f"{log_line}", flush=True)
-            
-            # Robust evidence capture & instant issue report generation
-            artifacts = capture_failure_artifacts(device_id, debug_dir, ac)
-            issue_path = generate_issue_report(flow, run_res["error_summary"], artifacts, str(issues_dir))
-            
-            if artifacts.get("screenshot"):
-                print(f"          ├── 📸 Snapshot: {artifacts['screenshot']}")
-            if artifacts.get("hierarchy"):
-                print(f"          ├── 🔍 UI Hierarchy: {artifacts['hierarchy']}")
-            print(f"          └── 📝 ISSUE LOGGED: {issue_path}", flush=True)
-
-            checkpoint_data.setdefault("completed", {})[flow_path] = {
-                "status": "FAILED",
-                "step": current_step,
-                "ac": ac,
-                "title": title,
-                "duration": duration_s,
-                "issue": issue_path,
-                "evidence": artifacts,
-            }
-            checkpoint_data["failed"] = failed_count
-
-        # Append to progress log
+            # Check fail-fast condition
+            if args.fail_fast and failed_count >= args.fail_fast:
+                print("\n" + "!" * 70)
+                print(f"🛑 Fail-fast threshold reached ({failed_count} failure(s)). Stopping suite early.")
+                print("!" * 70)
+                break
+    except KeyboardInterrupt:
+        interrupted = True
+        msg = "\n🛑 Suite interrupted by user (Ctrl+C). Writing summary and token report..."
+        print(msg, flush=True)
         with open(progress_log, "a", encoding="utf-8") as f:
-            f.write(f"{log_line}\n")
-
-        # Save checkpoint atomically
-        with open(checkpoint_file, "w", encoding="utf-8") as f:
-            json.dump(checkpoint_data, f, indent=2)
-
-        # Check fail-fast condition
-        if args.fail_fast and failed_count >= args.fail_fast:
-            print("\n" + "!" * 70)
-            print(f"🛑 Fail-fast threshold reached ({failed_count} failure(s)). Stopping suite early.")
-            print("!" * 70)
-            break
+            f.write(f"{msg.strip()}\n")
 
     total_suite_duration = time.time() - start_suite_time
     mins, secs = divmod(int(total_suite_duration), 60)
 
     # Print Final Summary Banner
     print("\n" + "=" * 70)
-    final_banner = f"🏁 COMPLETED: ✅ {verified_count} Passed | ❌ {failed_count} Failed | Total: {total} | Duration: {mins}m {secs}s"
+    status_label = "INTERRUPTED" if interrupted else "COMPLETED"
+    final_banner = f"🏁 {status_label}: ✅ {verified_count} Passed | ❌ {failed_count} Failed | Total: {total} | Duration: {mins}m {secs}s"
     if is_tty:
-        c_final = C_GREEN if failed_count == 0 else C_RED
+        c_final = C_GREEN if (failed_count == 0 and not interrupted) else C_RED
         print(f"{c_final}{final_banner}{C_RESET}")
     else:
         print(final_banner)
@@ -902,14 +962,16 @@ def main():
             f.write(f"| {step_col} | {d['ac']} | {d['title']} | {status_icon} | {d['duration']}s | {issue_link} |\n")
     
     print(f"📊 Summary report: {summary_md_path}")
-    token_line = write_token_report(out_dir)
+    token_line = write_token_report(out_dir, track_tokens)
 
     # The session waits on this file, not on stdout: with --open-terminal stdout is another window.
     with open(progress_log, "a", encoding="utf-8") as f:
         if token_line:
             f.write(f"{token_line}\n")
-        f.write(f"🏁 COMPLETED: ✅ {verified_count} Passed | ❌ {failed_count} Failed | Total: {total} | Duration: {mins}m {secs}s\n")
+        f.write(f"{final_banner}\n")
         f.write(f"📊 Summary report: {summary_md_path}\n")
+    if interrupted:
+        return 130
     return 0 if failed_count == 0 else 1
 
 
