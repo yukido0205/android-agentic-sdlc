@@ -1,9 +1,9 @@
-# Android Agentic SDLC (`android-agentic-sdlc`) — Bộ Kỹ Năng AI Agent Thực Chiến Cho Android/Mobile
+# Mobile Agentic SDLC (`mobile-agentic-sdlc`) — Bộ Kỹ Năng AI Agent Thực Chiến Cho Android & iOS
 
 > 🌐 **Ngôn ngữ (Language):** [English (README.md)](./README.md) | **Tiếng Việt**  
 > 📐 **Case Studies & Tư Duy Kiến Trúc:** [Tiếng Việt (OVERVIEW_VI.md)](./OVERVIEW_VI.md) | [English (OVERVIEW.md)](./OVERVIEW.md)
 
-> **Hệ thống điều phối kỹ thuật (Engineering Harness) chuẩn Production dành cho đội ngũ Android & Kotlin.**  
+> **Hệ thống điều phối kỹ thuật (Engineering Harness) chuẩn Production dành cho đội ngũ Mobile (Android & iOS).**  
 > Kết hợp **9 Kỹ năng AI Agent theo vòng đời SDLC**, **1 Quy tắc nền luôn bật (`rules/code-hygiene.md`)**, và **1 Chốt chặn Hook cơ học (`hooks/hooks.json`)**—biến các trợ lý lập trình AI từ công cụ sinh code tự phát thành cộng sự phát triển phần mềm có kỷ luật, kiểm soát hồi quy tuyệt đối.
 
 ---
@@ -60,9 +60,9 @@ Chất lượng code là nguyên tắc bất biến, không phải bước tùy 
 
 ### 🔒 Tầng 2: Chốt Chặn Sự Kiện Trước Khi Gọi Công Cụ (`hooks/hooks.json` & `pre-tool-guard.py`) — *Kỷ Luật Cứng (Hard Gate)*
 LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python thì không. Chạy đồng bộ trong **<20ms** với **chi phí 0 token** ngay trước khi Agent gọi `write_file`, `edit_file` hoặc `run_command`:
-- **`[domain-purity-guard]`:** Từ chối ngay lập tức (`deny`) nếu AI cố tình ghi/sửa file `.kt` trong thư mục `/domain/` mà có chứa `import android.*` hoặc `import androidx.*`.
-- **`[maestro-static-gate]`:** Từ chối (`deny`) ngay lúc lưu file `.maestro/**/*.yaml` nếu đặt sai tên chuẩn `ac-NN-<slug>.yaml`, dùng tọa độ chạm cứng (`point: x, y`), hoặc quên viết câu lệnh `assertVisible`/`assertTrue`.
-- **`[command-safety-guard]`:** Từ chối (`deny`) lệnh chạy `maestro test` thô trên terminal (bắt buộc đi qua `suite-runner.py` để chống tràn token) và bật hộp thoại xác nhận bắt buộc (`force_ask`) với các lệnh nguy hiểm (`git reset --hard`, `git push --force`, `adb uninstall`).
+- **`[domain-purity-guard]`:** Từ chối ngay lập tức (`deny`) nếu AI cố tình ghi/sửa file `.kt` hoặc `.swift` trong thư mục `/domain/` mà có chứa `import android.*`, `androidx.*`, hoặc `import UIKit`, `SwiftUI`, `CoreData`.
+- **`[maestro-static-gate]`:** Từ chối (`deny`) ngay lúc lưu file `.maestro/**/*.yaml` nếu đặt sai tên chuẩn `ac-NN-<slug>.yaml`, dùng tọa độ pixel chạm cứng (`point: x, y`), hoặc quên viết câu lệnh `assertVisible`/`assertTrue`.
+- **`[command-safety-guard]`:** Từ chối (`deny`) lệnh chạy `maestro test` thô trên terminal (bắt buộc đi qua `suite-runner.py` trên Android hoặc `suite-runner-ios.py` trên iOS để chống tràn token) và bật hộp thoại xác nhận bắt buộc (`force_ask`) với các lệnh nguy hiểm (`git reset --hard`, `git push --force`, `adb uninstall`, `xcrun simctl erase`).
 
 ### 🛠️ Tầng 3: Danh Mục 9 Kỹ Năng Chuyên Biệt (`skills/`) — *Quy Trình Theo Ngữ Cảnh*
 
@@ -70,11 +70,11 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 | :--- | :--- | :--- | :--- | :--- |
 | **`plan-feature`** | `skills/plan-feature` | `/plan-feature <PRD/Brief>` | Plan | Chuyển đổi PRD/Figma sơ sài thành một tài liệu tinh gọn duy nhất `plans/<EPIC>/PLAN.md`. |
 | **`plan-slicing`** | `skills/plan-slicing` | `/plan-slicing init\|plan\|step` | Plan | Chẻ nhỏ Epic thành các lát cắt dọc song song trên Mock ($\le 300$ dòng/MR) qua `CONTRACT.md`. |
-| **`code-domain`** | `skills/code-domain` | `/code-domain <file>` | Code (Domain) | Bóc tách logic nghiệp vụ thành các UseCase/Entity pure Kotlin, hoàn toàn không dính Android SDK. |
+| **`code-domain`** | `skills/code-domain` | `/code-domain <file>` | Code (Domain) | Bóc tách logic nghiệp vụ thành các UseCase/Entity pure Kotlin/Swift, hoàn toàn không dính Android/iOS SDK. |
 | **`test-hunter`** | `skills/test-hunter` | `/test-hunter <ticket\|log>` | Test (Chẩn đoán) | Chuyên gia điều tra nguyên nhân gốc (chỉ đọc — không sửa code). Xuất báo cáo `DIAGNOSIS`. |
 | **`guard-blast`** | `skills/guard-blast` | `/guard-blast <target>` | Guard (An toàn) | Tính toán Blast Radius, khóa chặt danh sách file được sửa (Allowlist) và lập ma trận regression. |
-| **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Soạn thảo) | Viết kịch bản test Maestro YAML chuẩn ngữ nghĩa, kiểm tra tĩnh qua `validate-flow.py`. |
-| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test quy mô lớn, stream live ANSI ra terminal, chụp màn hình lỗi và 0 tốn token khi pass. |
+| **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Soạn thảo) | Viết kịch bản test Maestro YAML chuẩn ngữ nghĩa cho Android & iOS, kiểm tra tĩnh qua `validate-flow.py`. |
+| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test native (`suite-runner.py` / `suite-runner-ios.py`), stream live ANSI, chụp màn hình lỗi và 0 tốn token khi pass. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Nhạc trưởng) | Điều phối toàn diện vòng đời bug (Hiểu $\to$ Sửa $\to$ Chứng minh $\to$ Ship), người chỉ duyệt 3 cổng. |
 | **`ship-mr`** | `skills/ship-mr` | `/ship-mr` | Ship (Xuất xưởng) | Kiểm toán git diff, đối chiếu mệnh đề nhân quả và bằng chứng test; tạo commit & nội dung MR. |
 

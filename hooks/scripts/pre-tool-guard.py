@@ -15,13 +15,14 @@ import sys
 
 # --- Regex patterns aligned with skills/test-author/scripts/validate-flow.py ---
 ANDROID_IMPORT_RE = re.compile(r"^\s*import\s+android(x)?\.", re.MULTILINE)
+SWIFT_IMPORT_RE = re.compile(r"^\s*import\s+(UIKit|SwiftUI|CoreData|SwiftData)\b", re.MULTILINE)
 MAESTRO_FILE_RE = re.compile(r"^(ac-\d{2}-[a-z0-9-]+\.yaml|_.*\.yaml)$")
-COORD_TAP_RE = re.compile(r"point:\s*[\"']?\s*\d+\s*,\s*\d+", re.IGNORECASE)
+COORD_TAP_RE = re.compile(r"point:\s*[\"']?\s*\d+(?:\.\d+)?(?!\s*%)\s*,\s*\d+(?:\.\d+)?(?!\s*%)", re.IGNORECASE)
 ASSERTION_RE = re.compile(r"^\s*-\s*(assertVisible|assertTrue|assertNotVisible):", re.MULTILINE)
 
 RAW_MAESTRO_TEST_RE = re.compile(r"(^|[;&|]\s*)maestro\s+test\b")
 DESTRUCTIVE_CMD_RE = re.compile(
-    r"\b(git\s+reset\s+--hard|git\s+push\s+(-f|--force)|git\s+clean\s+-[a-z]*f|adb\s+uninstall)\b"
+    r"\b(git\s+reset\s+--hard|git\s+push\s+(-f|--force)|git\s+clean\s+-[a-z]*f|adb\s+uninstall|xcrun\s+simctl\s+(erase|uninstall))\b"
 )
 
 
@@ -48,12 +49,19 @@ def check_file_modification(tool_name: str, args: dict) -> None:
     )
 
     # 1. Domain Purity Guard (for `code-domain` skill)
-    if norm_path.endswith(".kt") and "/domain/" in norm_path:
-        if ANDROID_IMPORT_RE.search(new_text):
+    lower_path = norm_path.lower()
+    if "/domain/" in lower_path:
+        if norm_path.endswith(".kt") and ANDROID_IMPORT_RE.search(new_text):
             reply(
                 "deny",
                 "[domain-purity-guard] Prohibited `import android.*` or `import androidx.*` detected in "
                 f"'{raw_path}'. Files inside `/domain/` must remain 100% pure Kotlin.",
+            )
+        if norm_path.endswith(".swift") and SWIFT_IMPORT_RE.search(new_text):
+            reply(
+                "deny",
+                "[domain-purity-guard] Prohibited `import UIKit`, `SwiftUI`, `CoreData`, or `SwiftData` detected in "
+                f"'{raw_path}'. Files inside `/domain/` must remain 100% pure Swift.",
             )
 
     # 2. Maestro Static Gate (for `test-author` skill)
@@ -98,12 +106,12 @@ def check_run_command(args: dict) -> None:
         reply("allow")
 
     # 3a. Block raw `maestro test` to prevent context/token bleed (enforce `test-runner`)
-    if RAW_MAESTRO_TEST_RE.search(cmd) and "suite-runner.py" not in cmd:
+    if RAW_MAESTRO_TEST_RE.search(cmd) and "suite-runner" not in cmd:
         reply(
             "deny",
             "[command-safety-guard] Do not run raw `maestro test` directly in the shell — it floods "
-            "the context window with verbose logs. Use `suite-runner.py` from `test-runner` instead "
-            "(e.g., `python3 skills/test-runner/scripts/suite-runner.py <target> -m step`).",
+            "the context window with verbose logs. Use `suite-runner.py` (Android) or `suite-runner-ios.py` (iOS) "
+            "from `test-runner` instead (e.g., `python3 skills/test-runner/scripts/suite-runner-ios.py <target> -m step`).",
         )
 
     # 3b. Force user confirmation on destructive git / adb commands

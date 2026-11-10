@@ -114,7 +114,9 @@ appId: com.example.app
 ```
 
 ### ⚠️ Anti-Flakiness & Quality Rules (Mandatory)
-* **NO Coordinate Tapping (`point:`):** Never use hardcoded pixel coordinates like `input tap 100 500` or `tapOn: { point: "100, 500" }`. Always find the view ID in layout XMLs or use accessible text.
+* **NO Raw Pixel Tapping (`point: x, y`):** Never use hardcoded pixel coordinates like `point: 100, 500`. 
+  - Android: Find the view ID in layout XML or Jetpack Compose `testTag`.
+  - iOS (UIKit/SwiftUI): Refer to [references/ios-selectors.md](./references/ios-selectors.md) for the Fallback Chain: `id:` -> Apple System Text/Labels -> Relative positioning (`below:`, `above:`, `childOf:`) -> Natural swipe gestures -> Controlled Testability Injection (`accessibilityIdentifier`).
 * **Always Assert:** Every flow must contain at least one `assertVisible`, `assertTrue`, or `assertNotVisible`. A flow with no assertion is not a test.
 * **Timeout Handling:** Prefer `extendedWaitUntil: { visible: ..., timeout: 10000 }` over static `sleep: 5000`.
 
@@ -139,7 +141,12 @@ The validator checks:
 
 ## 4. Handoff to Test Runner
 
-Once validation passes, inform the user or launch the runner:
-```bash
-python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/ -m step
-```
+Once validation passes, inform the user or launch the appropriate runner:
+- **Android**:
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/ -m step
+  ```
+- **iOS**:
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner-ios.py .maestro/<EPIC>/ -m step
+  ```

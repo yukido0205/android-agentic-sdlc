@@ -31,7 +31,7 @@ RESET = "\033[0m"
 FOLDER_PATTERN = re.compile(r"^(\d{2}-[a-z0-9-]+|regression|_.*|templates)$")
 FILE_PATTERN = re.compile(r"^(ac-\d{2}-[a-z0-9-]+\.yaml|_.*\.yaml)$")
 ASSERTION_PATTERN = re.compile(r"^\s*-\s*(assertVisible|assertTrue|assertNotVisible):", re.MULTILINE)
-COORDINATE_TAP_PATTERN = re.compile(r"point:\s*[\"']?\s*\d+\s*,\s*\d+", re.IGNORECASE)
+COORDINATE_TAP_PATTERN = re.compile(r"point:\s*[\"']?\s*\d+(?:\.\d+)?(?!\s*%)\s*,\s*\d+(?:\.\d+)?(?!\s*%)", re.IGNORECASE)
 EXCESSIVE_SLEEP_PATTERN = re.compile(r"^\s*-\s*sleep:\s*(\d+)", re.MULTILINE)
 
 

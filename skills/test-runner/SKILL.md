@@ -1,7 +1,7 @@
 ---
 name: test-runner
-description: "Device automation for Android — verifies PRD behavior, runs regression suites, and checks Figma design specs on device. Supports high-volume test suites (~270 items) with real-time live terminal monitoring, instant defect logging, and state reset. Use when verifying a step, running regression, testing on emulator, or when the user says '/test-runner', 'verify on device', 'run regression', 'test PROJ-123'."
-argument-hint: "<target> [-m repro|step|regression|smoke] [--headless] [--filter <tag>] [--fail-fast [N]]"
+description: "Device automation for Mobile (Android & iOS) — verifies PRD behavior, runs regression suites, and checks design specs on device/simulator. Supports high-volume test suites with real-time live terminal monitoring, instant defect logging, and state reset. Use when verifying a step, running regression, testing on device/simulator, or when the user says '/test-runner', 'verify on device', 'run regression'."
+argument-hint: "<target> [-m repro|step|regression|smoke] [--filter <tag>] [--fail-fast [N]]"
 model: sonnet
 allowed-tools:
   - Read
@@ -12,6 +12,7 @@ allowed-tools:
   - Bash(python3 skills/test-runner/scripts/*)
   - Bash(~/Library/Android/sdk/platform-tools/adb *)
   - Bash(adb *)
+  - Bash(xcrun simctl *)
   - Bash(claude mcp list *)
   - ToolSearch
   - AskUserQuestion
@@ -25,29 +26,36 @@ allowed-tools:
   - Bash(./gradlew :app:installDevDebug *)
 ---
 
-# E2E Test Automation — PRD Behavior + Figma Look + Regression on Device
+# E2E Test Automation — PRD Behavior + Regression on Mobile (Android & iOS)
 
-The unified test automation system for Android development and QC:
-1. **Single-Step Authoring & Verification (`behavior`):** Author and verify flows for a single step/ticket using Maestro MCP and `device.py nodes`.
-2. **High-Speed Suite & Regression Runner (`regression` / `suite`):** Execute multi-flow suites or full regression (~270 items) via `suite-runner.py` with real-time live terminal monitoring, instant defect logging, and state reset.
-3. **Design Verification (`design`):** Measure exact screen metrics (dp, padding, colors) against Figma specs using `device.py check`.
+The unified test automation system for Mobile development and QC:
+1. **Single-Step Authoring & Verification (`behavior`):** Author and verify flows for a single step/ticket using Maestro MCP and device nodes.
+2. **High-Speed Suite & Regression Runner (`regression` / `suite`):** Execute multi-flow suites or full regression via platform-native runners with real-time live terminal monitoring, instant defect logging, and state reset:
+   - **Android**: `skills/test-runner/scripts/suite-runner.py`
+   - **iOS**: `skills/test-runner/scripts/suite-runner-ios.py`
+3. **Design Verification (`design`):** Measure exact screen metrics against Figma specs.
 
 | Mode | Answers | Tool | Re-run cost |
 |---|---|---|---|
 | `behavior` | Does it do what the PRD says? | Maestro MCP — one flow file per acceptance line | ~0 — read pass/fail |
 | `design` | Does it look like Figma? | `device.py check` — Figma numbers vs measured dp/colours | a table, only diffs need eyes |
-| `regression` | Does the epic meet its PRD edge cases? | `suite-runner.py` — native CLI execution with live monitor | ~0 tokens |
+| `regression` | Does the epic meet its PRD edge cases? | `suite-runner.py` (Android) / `suite-runner-ios.py` (iOS) — native CLI execution | ~0 tokens |
 
 ---
 
 ## 🛑 UNIVERSAL DEFAULT ENTRYPOINT — RUNNER-FIRST POLICY
 
 **RULE #1 (MANDATORY & NON-NEGOTIABLE):**
-Unless the user explicitly asks to *author/write a brand new test file from scratch*, **EVERY request to test, verify, run, check, or validate on device MUST DEFAULT TO CALLING `suite-runner.py` IMMEDIATELY**:
+Unless the user explicitly asks to *author/write a brand new test file from scratch*, **EVERY request to test, verify, run, check, or validate on device/simulator MUST DEFAULT TO CALLING THE NATIVE RUNNER IMMEDIATELY**:
 
-```bash
-python3 skills/test-runner/scripts/suite-runner.py <target> [options]
-```
+- **For Android Projects:**
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py <target> [options]
+  ```
+- **For iOS Projects:**
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner-ios.py <target> [options]
+  ```
 
 *(Note: `suite-runner.py` automatically initializes token usage tracking ngầm và xuất báo cáo khi hoàn thành).*
 

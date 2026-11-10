@@ -27,10 +27,11 @@ An investigative, read-only skill focused exclusively on discovering the exact f
 
 ### 3. Diagnose the Failure Mode
 Classify into common failure classes:
-- **State Race / Concurrency:** Unsynchronized state updates, missing coroutine cancellation.
-- **Lifecycle Desync:** Fragment/Activity recreated, ViewModel flow collected multiple times, state lost on background kill.
+- **State Race / Concurrency:** Unsynchronized state updates, missing coroutine/Task cancellation, actor reentrancy.
+- **Lifecycle Desync:** Fragment/Activity or UIViewController recreated, ViewModel/ObservableObject flow collected multiple times, state lost on background kill.
 - **Contract / Nullability Violation:** API returned unexpected null or missing key, DTO parsing failure.
 - **Stale Cache / Mutation:** Mutable state modified in place without triggering reactive emission.
+- **Memory / Retain Cycle:** Strong reference cycles in closures/delegates (`[weak self]`), deallocation issues.
 
 ---
 
@@ -42,10 +43,10 @@ Always conclude investigation with the following structured format:
 ## DIAGNOSIS
 - **Ticket:** PROJ-123
 - **Root Cause:** 2–4 concise sentences citing exact files and line numbers explaining WHY the failure occurs.
-- **Failure Mechanism:** [State Race | Lifecycle Desync | Contract Mismatch | Edge Case | Logic Error]
+- **Failure Mechanism:** [State Race | Lifecycle Desync | Contract Mismatch | Retain Cycle | Logic Error]
 - **Files this fix touches:**
-  - `path/to/PrimaryFile.kt`
-  - `path/to/SecondaryFile.kt`
+  - `path/to/PrimaryFile.kt` (or `.swift`)
+  - `path/to/SecondaryFile.kt` (or `.swift`)
 - **Recommended Fix Strategy:** 1-2 sentence high-level solution without writing implementation code.
 - **Status:** [CONFIRMED | NEEDS-INFO (specify missing information)]
 ```
