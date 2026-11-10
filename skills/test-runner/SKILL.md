@@ -1,7 +1,7 @@
 ---
 name: test-runner
 description: "Device automation for Android — verifies PRD behavior, runs regression suites, and checks Figma design specs on device. Supports high-volume test suites (~270 items) with real-time live terminal monitoring, instant defect logging, and state reset. Use when verifying a step, running regression, testing on emulator, or when the user says '/test-runner', 'verify on device', 'run regression', 'test PROJ-123'."
-argument-hint: "<target> [-m repro|step|regression|smoke] [--headless] [--filter <tag>] [--fail-fast [N]]"
+argument-hint: "<target> [-m repro|step|regression|smoke] [--filter <tag>] [--fail-fast [N]]"
 model: sonnet
 allowed-tools:
   - Read
@@ -63,7 +63,8 @@ python3 skills/test-runner/scripts/suite-runner.py <target> [options]
 | `test PROJ-123` or `verify step-03` | `python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/<step_folder>/ -m step` |
 | `run smoke tests` | `python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/ -m smoke` |
 
-### ⛔ Strict Prohibitions (Zero Token Bleed):
+### ⛔ Strict Prohibitions (Zero Token Bleed & Live Terminal Enforcement):
+- **DO NOT** pass `--headless` or `--no-terminal` unless the user **explicitly typed** `--headless`, `--no-terminal`, or `headless` in their prompt. By default, `suite-runner.py` MUST open the external macOS Terminal window (`--open-terminal`) for live visual monitoring.
 - **DO NOT** inspect screens (`inspect_screen` or `device.py nodes`).
 - **DO NOT** execute manual `adb shell input tap` or uiautomator dumps.
 - **DO NOT** copy folders or rewrite `.yaml` flow files line by line.
@@ -172,14 +173,14 @@ python3 skills/test-runner/scripts/suite-runner.py <flow_directory_or_ticket> [o
 
 ### Streamlined Mode Presets (`-m / --mode`):
 Thay vì phải nhớ nhiều cờ rời rạc, sử dụng preset tương ứng với mục đích:
-- `-m repro`: Chạy repro flows (`--filter repro`, `--fail-fast 1`, in-process).
+- `-m repro`: Chạy repro flows (`--filter repro`, `--fail-fast 1`, live terminal).
 - `-m step`: Xác minh step tính năng mới (`--fail-fast 1`, live terminal).
 - `-m regression`: Chạy toàn bộ suite (`--resume`, live terminal).
 - `-m smoke`: Chạy smoke tests nhanh (`--filter @smoke`, `--fail-fast 1`, live terminal).
 
 ### Granular Override Options (Quyền ưu tiên cao nhất ghi đè Preset):
-- `--headless`, `--no-terminal`: Chạy trực tiếp trong shell hiện tại (không mở cửa sổ Terminal mới).
-- `--open-terminal`: Mở cửa sổ macOS Terminal live streaming (mặc định với regression/step).
+- `--open-terminal`: Mở cửa sổ macOS Terminal live streaming (mặc định cho tất cả các mode).
+- `--headless`, `--no-terminal`: **Chỉ sử dụng khi User gõ rõ cờ này trong câu lệnh** (bị chặn bởi `pre-tool-guard.py` và `suite-runner.py` nếu Agent tự ý thêm).
 - `--filter <tag_or_keyword>`: Lọc case theo từ khóa hoặc tag (ghi đè filter của preset).
 - `--fail-fast [N]`: Dừng sớm sau N failures (mặc định 1).
 - `--resume`: Tiếp tục từ `checkpoint.json` (bỏ qua case đã PASS).
