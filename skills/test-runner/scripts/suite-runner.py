@@ -684,6 +684,7 @@ def main():
     parser.add_argument("--output-dir", help="Output directory for reports and logs")
     parser.add_argument("--dry-run", action="store_true", help="List flows that would be executed and exit")
     parser.add_argument("--open-terminal", action="store_true", help="Launch suite in a new external macOS Terminal window for real-time live monitoring")
+    parser.add_argument("--new-terminal", action="store_true", help="Force opening a new external Terminal window instead of reusing existing monitor window")
     parser.add_argument("--headless", "--no-terminal", dest="headless", action="store_true", help="Run directly in current shell without opening an external Terminal window (only when explicitly requested by user)")
     parser.add_argument("--_terminal-child", dest="terminal_child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-token-track", action="store_true", help="Skip automatic token usage tracking")
@@ -759,9 +760,10 @@ def main():
         term_label = "IN-PROCESS (CURRENT SHELL)"
     ff_label = f"STOP AFTER {args.fail_fast} FAILURE(S)" if args.fail_fast else "RUN ALL"
     filter_label = f"'{args.filter}'" if args.filter else "NONE (ALL FLOWS)"
+    run_time_str = dt.datetime.now().strftime("%H:%M:%S")
 
     print("=" * 70)
-    print("⚙️  SUITE CONFIGURATION:")
+    print(f"⚙️  SUITE CONFIGURATION [{run_time_str}]:")
     print(f"   • Target:    {args.target}")
     print(f"   • Mode:      {mode_label}")
     print(f"   • Terminal:  {term_label}")
@@ -815,12 +817,12 @@ def main():
     track_tokens = not args.no_token_track
     token_start_warnings = start_token_tracking(track_tokens)
 
-    # If --open-terminal is requested, spawn a new Terminal window on macOS and exit
+    # If --open-terminal is requested, spawn or reuse an external Terminal window on macOS and exit
     if args.open_terminal:
         # Build child arguments using internal --_terminal-child to prevent recursive window spawns
         remaining_args = [
             a for a in sys.argv[1:]
-            if a not in ("--open-terminal", "--headless", "--no-terminal")
+            if a not in ("--open-terminal", "--new-terminal", "--headless", "--no-terminal")
         ]
         if "--_terminal-child" not in remaining_args:
             remaining_args.append("--_terminal-child")
@@ -829,7 +831,19 @@ def main():
         script_path = os.path.abspath(sys.argv[0])
         cwd = os.getcwd()
         quoted_args = " ".join([f'"{a}"' if " " in a else a for a in remaining_args])
+
+        # Clear screen and show a timestamped divider banner in the monitor terminal
+        run_time = dt.datetime.now().strftime("%H:%M:%S")
+        divider = "═" * 70
+        clean_target = str(args.target).replace('"', '\\"')
+        banner_cmd = (
+            f"printf '\\033]0;Maestro Test Monitor\\007' && "
+            f"clear && "
+            f"printf '\\033[1;36m{divider}\\n🔄 [{run_time}] E2E RUN: {clean_target}\\n{divider}\\033[0m\\n\\n' && "
+        )
+
         full_cmd = (
+            f'{banner_cmd}'
             f'export MAESTRO_TOKEN_MARK_INHERITED=1 && '
             f'export PATH="{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}:$PATH" && '
             f'cd "{cwd}" && python3 "{script_path}" {quoted_args}'
@@ -838,16 +852,44 @@ def main():
         # Support iTerm2 or macOS Terminal.app based on active environment
         term_program = os.environ.get("TERM_PROGRAM", "").lower()
         launched = False
+        force_new_term = "true" if args.new_terminal else "false"
 
         if "iterm" in term_program:
             escaped_cmd = full_cmd.replace('\\', '\\\\').replace('"', '\\"')
             iterm_script = f'''
             tell application "iTerm"
                 activate
-                set newWindow to (create window with default profile)
-                tell current session of newWindow
-                    write text "{escaped_cmd}"
-                end tell
+                set targetSession to missing value
+                if not {force_new_term} then
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            repeat with s in sessions of t
+                                try
+                                    if name of s contains "Maestro Test Monitor" or name of w contains "Maestro Test Monitor" then
+                                        set targetSession to s
+                                        select w
+                                        select t
+                                        select s
+                                        exit repeat
+                                    end if
+                                end try
+                            end repeat
+                            if targetSession is not missing value then exit repeat
+                        end repeat
+                        if targetSession is not missing value then exit repeat
+                    end repeat
+                end if
+
+                if targetSession is not missing value then
+                    tell targetSession
+                        write text "{escaped_cmd}"
+                    end tell
+                else
+                    set newWindow to (create window with default profile)
+                    tell current session of newWindow
+                        write text "{escaped_cmd}"
+                    end tell
+                end if
             end tell
             '''
             try:
@@ -861,7 +903,24 @@ def main():
             terminal_script = f'''
             tell application "Terminal"
                 activate
-                do script "{escaped_cmd}"
+                set targetTab to missing value
+                if not {force_new_term} then
+                    repeat with w in windows
+                        try
+                            if name of w contains "Maestro Test Monitor" then
+                                set targetTab to selected tab of w
+                                set index of w to 1
+                                exit repeat
+                            end if
+                        end try
+                    end repeat
+                end if
+
+                if targetTab is not missing value then
+                    do script "{escaped_cmd}" in targetTab
+                else
+                    do script "{escaped_cmd}"
+                end if
             end tell
             '''
             try:
@@ -871,7 +930,8 @@ def main():
                 print(f"Warning: Could not launch Terminal window ({e}). Running in current process instead...")
 
         if launched:
-            print("🚀 Successfully launched live monitor in external Terminal window!")
+            reused_str = "reused existing" if not args.new_terminal else "new window"
+            print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str})!")
             print(f"👉 Command executing: {full_cmd}")
             print("⏳ Tests are now running live in the external Terminal window.")
             print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.")
