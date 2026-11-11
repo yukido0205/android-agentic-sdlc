@@ -588,6 +588,84 @@ def write_token_report(out_dir, track_enabled=True):
     return line
 
 
+USER_HEADLESS_INTENT_RE = re.compile(r"(--headless|--no-terminal|\bheadless\b|\bno[- ]terminal\b)", re.IGNORECASE)
+
+
+def _user_requested_headless():
+    """Returns True if the user's latest chat prompt explicitly requested --headless / --no-terminal,
+    False if the user prompt did not request it, or None if no session transcript is active."""
+    if os.environ.get("SUITE_RUNNER_ALLOW_HEADLESS") == "1":
+        return True
+    try:
+        import glob as _glob
+        path, fmt = None, "unknown"
+        env_path = os.environ.get("CLAUDE_TRANSCRIPT_PATH")
+        if env_path and os.path.isfile(env_path):
+            path, fmt = env_path, "claude"
+        elif os.environ.get("CLAUDECODE") == "1":
+            proj = os.path.expanduser("~/.claude/projects/" + re.sub(r"[^A-Za-z0-9]", "-", os.getcwd()))
+            for k in ("CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"):
+                sid = os.environ.get(k)
+                if sid and os.path.isfile(os.path.join(proj, f"{sid}.jsonl")):
+                    path, fmt = os.path.join(proj, f"{sid}.jsonl"), "claude"
+                    break
+            if not path:
+                files = _glob.glob(proj + "/*.jsonl")
+                if files:
+                    path, fmt = max(files, key=os.path.getmtime), "claude"
+        if not path:
+            conv_id = os.environ.get("ANTIGRAVITY_CONVERSATION_ID")
+            app_dir = os.environ.get("ANTIGRAVITY_APP_DATA_DIR", os.path.expanduser("~/.gemini/antigravity"))
+            if conv_id and app_dir:
+                cand = os.path.join(app_dir, "brain", conv_id, ".system_generated", "logs", "transcript.jsonl")
+                if os.path.isfile(cand):
+                    path, fmt = cand, "antigravity"
+        if not path:
+            brain_glob = _glob.glob(os.path.expanduser("~/.gemini/antigravity/brain/*/.system_generated/logs/transcript.jsonl"))
+            if brain_glob:
+                newest = max(brain_glob, key=os.path.getmtime)
+                if (dt.datetime.now().timestamp() - os.path.getmtime(newest)) / 60.0 < 30:
+                    path, fmt = newest, "antigravity"
+        if not path or not os.path.isfile(path):
+            return None
+
+        latest_user_text = ""
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if fmt == "antigravity":
+                    if o.get("type") == "USER_INPUT":
+                        raw = o.get("content") or ""
+                        m = re.search(r"<USER_REQUEST>(.*?)</USER_REQUEST>", raw, re.DOTALL)
+                        latest_user_text = m.group(1).strip() if m else raw.strip()
+                else:
+                    if o.get("type") != "user":
+                        continue
+                    msg = o.get("message") or {}
+                    c = msg.get("content")
+                    text = (
+                        c if isinstance(c, str)
+                        else " ".join(b.get("text", "") for b in (c or []) if isinstance(b, dict) and b.get("type") == "text")
+                    ).strip()
+                    if not text:
+                        continue
+                    if text.startswith("Base directory for this skill"):
+                        m_arg = re.search(r"^ARGUMENTS:\s*(.+)$", text, re.MULTILINE)
+                        if m_arg:
+                            latest_user_text = f"{latest_user_text} {m_arg.group(1)}".strip()
+                        continue
+                    if not o.get("isMeta") and ("<command-name>" in text or "<command-message>" in text or not text.startswith("<")):
+                        latest_user_text = text
+        if not latest_user_text:
+            return None
+        return bool(USER_HEADLESS_INTENT_RE.search(latest_user_text))
+    except Exception:
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="High-Volume E2E Test Suite Runner for Dev & QC")
     parser.add_argument("target", help="Folder of YAML flows, ticket folder, or single YAML file")
@@ -607,10 +685,22 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="List flows that would be executed and exit")
     parser.add_argument("--open-terminal", action="store_true", help="Launch suite in a new external macOS Terminal window for real-time live monitoring")
     parser.add_argument("--new-terminal", action="store_true", help="Force opening a new external Terminal window instead of reusing existing monitor window")
-    parser.add_argument("--headless", "--no-terminal", dest="headless", action="store_true", help="Run directly in current shell without opening an external Terminal window")
+    parser.add_argument("--headless", "--no-terminal", dest="headless", action="store_true", help="Run directly in current shell without opening an external Terminal window (only when explicitly requested by user)")
+    parser.add_argument("--_terminal-child", dest="terminal_child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-token-track", action="store_true", help="Skip automatic token usage tracking")
 
     args = parser.parse_args()
+
+    # Guard against unprompted AI Agent `--headless` calls (honor `--headless` when run directly by user in TTY or requested in prompt)
+    if args.headless and not args.dry_run and not args.terminal_child:
+        is_agent_call = (
+            os.environ.get("CLAUDECODE") == "1"
+            or bool(os.environ.get("ANTIGRAVITY_CONVERSATION_ID"))
+            or not sys.stdout.isatty()
+        )
+        if is_agent_call and _user_requested_headless() is False:
+            print("⚠️ [guard] Ignoring unrequested `--headless` flag (user prompt did not request headless). Enforcing live Terminal window...")
+            args.headless = False
 
     # 1. Resolve Mode & Preset Defaults
     mode = args.mode
@@ -624,7 +714,10 @@ def main():
         if "regression" in target_lower:
             mode = "regression"
             is_auto_detected = True
-        elif Path(args.target).is_file() and Path(args.target).suffix in (".yaml", ".yml"):
+        elif "repro" in target_lower:
+            mode = "repro"
+            is_auto_detected = True
+        else:
             mode = "step"
             is_auto_detected = True
 
@@ -634,31 +727,37 @@ def main():
             args.filter = "repro"
         if args.fail_fast is None:
             args.fail_fast = 1
-        # Repro defaults to in-process execution unless --open-terminal is explicitly requested
+        if not args.headless and not args.terminal_child and not args.open_terminal:
+            args.open_terminal = True
     elif mode == "regression":
         args.resume = True
-        if not args.headless and not args.open_terminal:
+        if not args.headless and not args.terminal_child and not args.open_terminal:
             args.open_terminal = True
     elif mode == "step":
         if args.fail_fast is None:
             args.fail_fast = 1
-        if not args.headless and not args.open_terminal:
+        if not args.headless and not args.terminal_child and not args.open_terminal:
             args.open_terminal = True
     elif mode == "smoke":
         if args.filter is None:
             args.filter = "@smoke"
         if args.fail_fast is None:
             args.fail_fast = 1
-        if not args.headless and not args.open_terminal:
+        if not args.headless and not args.terminal_child and not args.open_terminal:
             args.open_terminal = True
 
-    # If --headless is passed, it strictly disables --open-terminal
-    if args.headless:
+    # If --headless or internal --_terminal-child is active, disable --open-terminal
+    if args.headless or args.terminal_child:
         args.open_terminal = False
 
     # Print Configuration Banner for complete visibility
     mode_label = (mode.upper() + (" (auto-detected)" if is_auto_detected else "")) if mode else "CUSTOM"
-    term_label = "EXTERNAL TERMINAL" if args.open_terminal else "IN-PROCESS (CURRENT SHELL)"
+    if args.open_terminal:
+        term_label = "EXTERNAL TERMINAL"
+    elif args.terminal_child:
+        term_label = "LIVE TERMINAL MONITOR"
+    else:
+        term_label = "IN-PROCESS (CURRENT SHELL)"
     ff_label = f"STOP AFTER {args.fail_fast} FAILURE(S)" if args.fail_fast else "RUN ALL"
     filter_label = f"'{args.filter}'" if args.filter else "NONE (ALL FLOWS)"
     run_time_str = dt.datetime.now().strftime("%H:%M:%S")
@@ -720,10 +819,13 @@ def main():
 
     # If --open-terminal is requested, spawn or reuse an external Terminal window on macOS and exit
     if args.open_terminal:
-        # Build child arguments, ensuring child runs with --headless to prevent recursive window spawns
-        remaining_args = [a for a in sys.argv[1:] if a not in ("--open-terminal", "--new-terminal")]
-        if "--headless" not in remaining_args and "--no-terminal" not in remaining_args:
-            remaining_args.append("--headless")
+        # Build child arguments using internal --_terminal-child to prevent recursive window spawns
+        remaining_args = [
+            a for a in sys.argv[1:]
+            if a not in ("--open-terminal", "--new-terminal", "--headless", "--no-terminal")
+        ]
+        if "--_terminal-child" not in remaining_args:
+            remaining_args.append("--_terminal-child")
         if "--skip-preflight" not in remaining_args:
             remaining_args.append("--skip-preflight")
         script_path = os.path.abspath(sys.argv[0])
@@ -831,6 +933,8 @@ def main():
             reused_str = "reused existing" if not args.new_terminal else "new window"
             print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str})!")
             print(f"👉 Command executing: {full_cmd}")
+            print("⏳ Tests are now running live in the external Terminal window.")
+            print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.")
             return 0
 
     # Output directory setup
