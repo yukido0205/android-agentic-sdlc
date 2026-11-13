@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Glob
   - Bash(python3 skills/test-runner/scripts/*)
+  - Bash(python3 skills/test-author/scripts/*)
   - Bash(~/Library/Android/sdk/platform-tools/adb *)
   - Bash(adb *)
   - Bash(claude mcp list *)
@@ -28,13 +29,13 @@ allowed-tools:
 # E2E Test Automation — PRD Behavior + Figma Look + Regression on Device
 
 The unified test automation system for Android development and QC:
-1. **Single-Step Authoring & Verification (`behavior`):** Author and verify flows for a single step/ticket using Maestro MCP and `device.py nodes`.
+1. **Single-Step Authoring & Verification (`behavior`):** Author flows via **Code-First ID Extraction** (`extract-selectors.py` / source scan first, `device.py nodes` only as fallback) and execute via `suite-runner.py`.
 2. **High-Speed Suite & Regression Runner (`regression` / `suite`):** Execute multi-flow suites or full regression (~270 items) via `suite-runner.py` with real-time live terminal monitoring, instant defect logging, and state reset.
 3. **Design Verification (`design`):** Measure exact screen metrics (dp, padding, colors) against Figma specs using `device.py check`.
 
 | Mode | Answers | Tool | Re-run cost |
 |---|---|---|---|
-| `behavior` | Does it do what the PRD says? | Maestro MCP — one flow file per acceptance line | ~0 — read pass/fail |
+| `behavior` | Does it do what the PRD says? | Code-First YAML authoring + `suite-runner.py -m step` | ~0 — native CLI pass/fail |
 | `design` | Does it look like Figma? | `device.py check` — Figma numbers vs measured dp/colours | a table, only diffs need eyes |
 | `regression` | Does the epic meet its PRD edge cases? | `suite-runner.py` — native CLI execution with live monitor | ~0 tokens |
 
@@ -94,10 +95,10 @@ from an empty session, and make fewer calls. Output size matters far less.
 
 1. **Prefer a fresh session.** In an old one every call re-reads its history; `token-usage.py start` (§0) warns, and the run goes on.
 2. **Never read a plan, PRD or Figma page whole.** Lines: `scripts/extract-acceptance.sh`. PRD: grep the `§` a line cites. Figma: cache first, then one frame node (see `references/design-spec.md`).
-3. **Read a screen with `device.py nodes [substr]`, not `inspect_screen`.** It prints one line per usable node — `id | text | x,y wxh dp | flags` — about 8× smaller than `inspect_screen` on the same screen (measured: 1.1k vs ~8.4k characters). Pass a substring to print only matching rows. Once per screen state; again only after an action changed the screen and only for an id you do not have yet. `inspect_screen` only when you need the parent/child tree.
+3. **Extract selectors from source code first (`extract-selectors.py` or `Grep` XML/Compose); use `device.py nodes [substr]` only as fallback.** Reading `res/layout/*.xml` (`android:id`) or Compose (`Modifier.testTag`) is 10× faster and costs ~0 device tokens. Only when an ID is missing from source code (e.g., Server-Driven UI, WebView, system dialog) or fails at runtime, call `device.py nodes [substr]` (prints `id | text | x,y wxh dp | flags` — 8× smaller than `inspect_screen`).
 4. **No full-screen images, ever.** Not `take_screenshot`, not `adb screencap` + `Read`. The only image allowed is `device.py crop <id>` of a node on a ✗ row.
 5. **One shell call per screen-state change.** Chain every `adb` command a state needs (`am start`, `input`, `logcat | grep`) into a single Bash call.
-6. **Explore with inline YAML, persist once.** Try steps with `run` + `yaml`, several commands per call rather than one call per tap; write the `.yaml` file only when the sequence works (`run` validates syntax, no separate check). Gradle: `| tail -3`.
+6. **Write `.yaml` flow files directly from static IDs and run via `suite-runner.py`.** Do not step through flows one tap at a time via MCP. Write the `.yaml` files using extracted selectors, validate with `validate-flow.py`, and execute in one continuous pass via `suite-runner.py`. Gradle: `| tail -3`.
 7. **`cheat_sheet` is long — at most once per session**, and only when `references/maestro-flow.md` does not cover the command you need. Never call it "to be safe".
 8. **Never use the cloud tools** (`run_on_cloud`, `list_cloud_devices`, …): they upload the app to an external service.
 9. **Load a reference only for the mode you are in** (`maestro-flow.md` / `design-spec.md`), and `issue-report-template.md` only once an app defect is confirmed.
@@ -147,18 +148,23 @@ For each `AC-n`, classify once: **behavior**, **design**, or **not on device** (
 
 ---
 
-## 2 · Behavior mode (Single Step Authoring & Verification)
+## 2 · Behavior mode (Single Step Authoring & Verification — Code-First ID Extraction)
 
-Use this when writing new test flows for a step:
+When authoring and verifying new test flows for a step, follow the **Static-First, Dynamic-Fallback** workflow:
 1. Read `references/maestro-flow.md` for the **semantic naming conventions**.
 2. **Never use cryptic folder names** (`s3`, `f3`, `s2s4`). Structure folders descriptively:
    - Feature folder: `.maestro/<RUN>/<index>-<feature-domain>/` (e.g. `.maestro/<TICKET>/03-checkout-payment/`)
    - Flow file: `ac-<index>-<verbatim-behavior-slug>.yaml` (e.g. `ac-01-submit-disabled-when-empty.yaml`)
-3. Reach the screen (reuse `_nav/<screen>.yaml` via `run` + `files`), then `device.py nodes` to get element ids.
-4. Try the line's steps with `run` + inline `yaml`. When they pass, write the `.yaml` flow file.
-   Header must include: `# AC-n: <short title> — PRD §n`. Optional tags: `@smoke`, `@regression`.
-   Log the progress to chat immediately: `<title> - verified - <n>/<total>`.
-5. Run the flows. When testing > 2 flows, switch to `suite-runner.py` (§2b) to avoid context bloat.
+3. **Step 1 — Read Source Code First (Priority #1, ~90% of cases, ~0 device tokens):**
+   - Run `python3 skills/test-author/scripts/extract-selectors.py [module_or_path] -k "<keyword>"` (or `Grep` `res/layout/` for `android:id` and Compose `.kt` files for `Modifier.testTag`).
+   - **Found IDs in Code?** Proceed directly to Step 4 and write the `.yaml` files.
+   - **Not found / Server-Driven UI (SDUI)?** Fallback to Step 3b: reach the screen and run `python3 skills/test-runner/scripts/device.py nodes [substr]` once to dump runtime IDs.
+4. **Step 2 — Write `.yaml` Flow Files Immediately:**
+   - Write the `.yaml` flow files using the bare IDs (`id: "<view_id>"`) and text extracted in Step 1.
+   - Header must include: `# AC-n: <short title> — PRD §n`. Optional tags: `@smoke`, `@regression`.
+   - Validate statically: `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/`.
+5. **Step 3 — Execute One Continuous Pass via `suite-runner.py` (§2b):**
+   - Run `python3 skills/test-runner/scripts/suite-runner.py .maestro/<RUN>/<index>-<feature-domain>/ -m step` to execute all flows natively with live terminal streaming and 0 token bleed.
 
 ---
 

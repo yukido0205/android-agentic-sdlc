@@ -316,18 +316,21 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 9 s
 
 ---
 
-### 5.6. `test-author` — Maestro YAML Flow Author & Static Validator
-- **When to Use:** To author robust, deterministic Maestro UI flows from User Stories or reproduction steps.
+### 5.6. `test-author` — Maestro YAML Flow Author & Static Validator (Code-First ID Extraction)
+- **When to Use:** To author robust, deterministic Maestro UI flows from User Stories or reproduction steps using **Code-First ID Extraction** (scans XML `android:id` and Compose `Modifier.testTag` statically first at ~0 device token cost, falling back to `device.py nodes` only for Server-Driven UI or missing IDs).
 - **Trigger / Command:**
   ```bash
   # Step 1: Extract ACs from PLAN.md or flow-bug.md and author Maestro YAML flows
   /test-author plans/APP-8092/flow-bug.md --domain 02-checkout
 
+  # Optional CLI: Scan static XML/Compose selectors for a feature before authoring
+  python3 skills/test-author/scripts/extract-selectors.py app/src/main -k "checkout"
+
   # Step 2: Statically validate authored flows (no coordinate taps, assertions present)
   python3 skills/test-author/scripts/validate-flow.py .maestro/APP-8092/
   ```
 - **Inputs:** Acceptance criteria, bug reproduction steps, or `PLAN.md` / `flow-bug.md`.
-- **Outputs:** Validated Maestro YAML test flow (e.g., `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) utilizing accessibility ID/text selectors.
+- **Outputs:** Validated Maestro YAML test flow (e.g., `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) utilizing bare resource IDs, Compose `testTag`, or resolved text selectors, ready for one-shot execution via `suite-runner.py`.
 
 ---
 

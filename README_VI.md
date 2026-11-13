@@ -314,18 +314,21 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
 ---
 
-### 5.6. `test-author` — Tự Động Viết & Kiểm Tra Tĩnh Test Maestro YAML
-- **Khi nào sử dụng:** Tạo kịch bản kiểm thử giao diện Maestro E2E chuẩn xác dựa trên tiêu chí nghiệm thu của User Story hoặc luồng tái hiện lỗi.
+### 5.6. `test-author` — Tự Động Viết & Kiểm Tra Tĩnh Test Maestro YAML (Code-First ID Extraction)
+- **Khi nào sử dụng:** Tạo kịch bản kiểm thử giao diện Maestro E2E chuẩn xác dựa trên tiêu chí nghiệm thu của User Story hoặc luồng tái hiện lỗi theo quy trình **Code-First ID Extraction** (Tĩnh trước, Động là Fallback: ưu tiên đọc XML `android:id` và Compose `Modifier.testTag` trực tiếp từ source code nhanh gấp 10 lần và tốn ~0 token thiết bị; chỉ fallback sang `device.py nodes` khi gặp Server-Driven UI hoặc không có ID tĩnh).
 - **Lệnh kích hoạt / Cú pháp:**
   ```bash
-  # Bước 1: Agent trích xuất AC từ PLAN.md hoặc flow-bug.md và tạo kịch bản Maestro YAML
+  # Bước 1: Agent trích xuất AC từ PLAN.md hoặc flow-bug.md, quét ID từ code và tạo kịch bản Maestro YAML
   /test-author plans/APP-8092/flow-bug.md --domain 02-checkout
+
+  # CLI bổ trợ: Quét nhanh toàn bộ XML android:id, Compose testTag & strings.xml theo từ khóa
+  python3 skills/test-author/scripts/extract-selectors.py app/src/main -k "checkout"
 
   # Bước 2: Kiểm tra tĩnh (chặn bấm tọa độ, thiếu assert, sai tên file)
   python3 skills/test-author/scripts/validate-flow.py .maestro/APP-8092/
   ```
 - **Đầu vào:** Tiêu chí nghiệm thu (Given/When/Then) hoặc kịch bản tái hiện bug trong `PLAN.md` / `flow-bug.md`.
-- **Đầu ra:** File test Maestro YAML hoàn chỉnh (ví dụ: `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) sử dụng selector accessibility ID/text bền vững.
+- **Đầu ra:** File test Maestro YAML hoàn chỉnh (ví dụ: `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) sử dụng selector bare ID / Compose `testTag` / text bền vững, sẵn sàng giao cho `suite-runner.py` chạy CLI một mạch.
 
 ---
 

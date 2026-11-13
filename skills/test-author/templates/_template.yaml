@@ -8,18 +8,18 @@ appId: com.example.app
     file: ../_shared/_login.yaml # or relative helper path
     optional: true
 
-# 2. Action steps
+# 2. Action steps (Prefer bare XML id or Compose testTag extracted from source code)
 - extendedWaitUntil:
     visible:
-      id: "com.example.app:id/<view_id>"
+      id: "<view_id>"
     timeout: 10000
 
 - tapOn:
-    id: "com.example.app:id/<view_id>"
+    id: "<view_id>"
 
 # 3. Assertions (Strictly required: verify PRD/AC behavior)
 - assertVisible:
     text: "<Expected text or title>"
 
 - assertVisible:
-    id: "com.example.app:id/<expected_element_id>"
+    id: "<expected_element_id>"
