@@ -14,15 +14,18 @@ Designed for Dev & QC to execute large suites (~270 test cases) efficiently:
 - Semantic folder and flow naming support (e.g., `03-checkout-payment/ac-01-submit-disabled.yaml`)
 """
 import argparse
+import atexit
 import datetime as dt
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional, Dict, Any
 
 # Android SDK & Maestro path resolution (respects ANDROID_HOME / ANDROID_SDK_ROOT with macOS/Linux fallbacks)
 SDK_ROOT = (
@@ -53,13 +56,102 @@ def run_adb(*args, binary=False, check=True):
     return res.stdout if binary else res.stdout.decode("utf-8", "replace")
 
 
-def detect_device(device_arg=None):
-    """Detects connected device ID or validates the provided one."""
-    if device_arg:
-        return device_arg
+# Device Mutex Lock Constants & Helpers
+DEVICE_LOCK_DIR = Path("/tmp/android_device_locks")
+LOCK_TIMEOUT_SECONDS = 30  # Max wait time for a busy device to become free
+STALE_LOCK_AGE_SECONDS = 3600  # 1 hour max age before auto-clearing stale lock
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Checks if a process ID is currently running on the system."""
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def get_device_lock_info(device_id: str) -> Optional[Dict[str, Any]]:
+    """Reads lock info for device if active. Cleans up stale locks automatically."""
+    lock_file = DEVICE_LOCK_DIR / f"{device_id}.lock"
+    if not lock_file.exists():
+        return None
+    try:
+        data = json.loads(lock_file.read_text(encoding="utf-8"))
+        pid = data.get("pid")
+        acquired_at = data.get("acquired_at", 0)
+        if (time.time() - acquired_at > STALE_LOCK_AGE_SECONDS) or not _is_pid_alive(pid):
+            try:
+                lock_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return None
+        return data
+    except Exception:
+        try:
+            lock_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+
+def acquire_device_lock(device_id: str, target: str = "") -> bool:
+    """Acquires lock for device_id under current PID."""
+    DEVICE_LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    lock_file = DEVICE_LOCK_DIR / f"{device_id}.lock"
+    data = {
+        "device_id": device_id,
+        "pid": os.getpid(),
+        "target": target,
+        "acquired_at": time.time(),
+    }
+    try:
+        lock_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to write lock file for {device_id}: {e}")
+        return False
+
+
+def release_device_lock(device_id: str):
+    """Releases lock for device_id if held by current process."""
+    lock_file = DEVICE_LOCK_DIR / f"{device_id}.lock"
+    if not lock_file.exists():
+        return
+    try:
+        data = json.loads(lock_file.read_text(encoding="utf-8"))
+        if data.get("pid") == os.getpid():
+            lock_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def setup_lock_cleanup(device_id: str):
+    """Registers atexit and signal handlers to release device lock upon process exit."""
+    atexit.register(lambda: release_device_lock(device_id))
+
+    def _sig_handler(signum, frame):
+        release_device_lock(device_id)
+        sys.exit(128 + signum)
+
+    try:
+        signal.signal(signal.SIGINT, _sig_handler)
+        signal.signal(signal.SIGTERM, _sig_handler)
+    except Exception:
+        pass
+
+
+def detect_device(device_arg=None, target="", enable_lock=True):
+    """Detects connected device ID, auto-leases a free device if multiple exist, or validates the provided one."""
     env_serial = os.environ.get("ANDROID_SERIAL")
-    if env_serial:
-        return env_serial.strip()
+    explicit_device = device_arg or (env_serial.strip() if env_serial else None)
+
     try:
         out = run_adb("devices")
     except Exception as e:
@@ -68,9 +160,76 @@ def detect_device(device_arg=None):
     devices = [l.split()[0] for l in lines if "\tdevice" in l]
     if not devices:
         sys.exit("BLOCKED: No Android device/emulator found via `adb devices`. Please start one.")
-    if len(devices) > 1:
-        print(f"Multiple devices found: {devices}. Using first device: {devices[0]} (use --device to override or set ANDROID_SERIAL)")
-    return devices[0]
+
+    if not enable_lock:
+        if explicit_device:
+            return explicit_device
+        return devices[0]
+
+    # Case 1: Explicit device specified by user / flag / ANDROID_SERIAL
+    if explicit_device:
+        if explicit_device not in devices:
+            sys.exit(f"BLOCKED: Specified device '{explicit_device}' not found in active devices: {devices}")
+        lock_info = get_device_lock_info(explicit_device)
+        if lock_info and lock_info.get("pid") != os.getpid():
+            other_pid = lock_info.get("pid")
+            target_desc = f" ({lock_info.get('target')})" if lock_info.get("target") else ""
+            print(f"⚠️  Specified device '{explicit_device}' is currently locked by PID {other_pid}{target_desc}.")
+            waited = 0
+            while waited < LOCK_TIMEOUT_SECONDS:
+                time.sleep(2)
+                waited += 2
+                lock_info = get_device_lock_info(explicit_device)
+                if not lock_info or lock_info.get("pid") == os.getpid():
+                    break
+                print(f"⏳ Waiting for device '{explicit_device}' to be released ({waited}/{LOCK_TIMEOUT_SECONDS}s)...")
+            if lock_info and lock_info.get("pid") != os.getpid():
+                sys.exit(f"BLOCKED: Device '{explicit_device}' is busy (PID {lock_info.get('pid')}). Please wait or use another emulator.")
+        acquire_device_lock(explicit_device, target)
+        return explicit_device
+
+    # Case 2: Only 1 device connected
+    if len(devices) == 1:
+        dev = devices[0]
+        lock_info = get_device_lock_info(dev)
+        if lock_info and lock_info.get("pid") != os.getpid():
+            other_pid = lock_info.get("pid")
+            print(f"⏳ Single device '{dev}' is currently busy (PID {other_pid}). Waiting for release...")
+            waited = 0
+            while waited < LOCK_TIMEOUT_SECONDS:
+                time.sleep(2)
+                waited += 2
+                lock_info = get_device_lock_info(dev)
+                if not lock_info or lock_info.get("pid") == os.getpid():
+                    break
+            if lock_info and lock_info.get("pid") != os.getpid():
+                sys.exit(f"BLOCKED: Device '{dev}' is busy (PID {lock_info.get('pid')}). Please wait or start a second emulator.")
+        acquire_device_lock(dev, target)
+        return dev
+
+    # Case 3: Multiple devices connected -> Smart Auto-Lease!
+    # Check all available devices and pick the first free (unlocked) one
+    start_wait = time.time()
+    first_attempt = True
+    while True:
+        for dev in devices:
+            lock_info = get_device_lock_info(dev)
+            if not lock_info or lock_info.get("pid") == os.getpid():
+                if not first_attempt:
+                    print(f"✅ Device released! Auto-leased: {dev}")
+                else:
+                    print(f"🤖 Multiple devices detected {devices}. Auto-leased available device: {dev}")
+                acquire_device_lock(dev, target)
+                return dev
+
+        first_attempt = False
+        elapsed = int(time.time() - start_wait)
+        if elapsed >= LOCK_TIMEOUT_SECONDS:
+            busy_summary = ", ".join([f"{d} (PID {get_device_lock_info(d).get('pid')})" for d in devices if get_device_lock_info(d)])
+            sys.exit(f"BLOCKED: All connected devices are busy: [{busy_summary}]. Timed out after {LOCK_TIMEOUT_SECONDS}s.")
+
+        print(f"⏳ All devices busy ({devices}). Waiting for a free device ({elapsed}/{LOCK_TIMEOUT_SECONDS}s)...")
+        time.sleep(2)
 
 
 def run_preflight_checks(device_id, package_name, required_envs=None, mock_gps=None):
@@ -691,6 +850,7 @@ def main():
     parser.add_argument("--headless", "--no-terminal", dest="headless", action="store_true", help="Run directly in current shell without opening an external Terminal window (only when explicitly requested by user)")
     parser.add_argument("--_terminal-child", dest="terminal_child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-token-track", action="store_true", help="Skip automatic token usage tracking")
+    parser.add_argument("--no-device-lock", action="store_true", help="Bypass automatic device locking and leasing")
 
     args = parser.parse_args()
 
@@ -804,7 +964,12 @@ def main():
         sys.exit(0)
 
     # Detect device & run preflight before starting token tracking or spawning external Terminal
-    device_id = detect_device(args.device)
+    enable_lock = not args.no_device_lock
+    device_id = detect_device(args.device, target=str(args.target), enable_lock=enable_lock)
+
+    lock_handed_off = False
+    if enable_lock:
+        atexit.register(lambda: release_device_lock(device_id) if not lock_handed_off else None)
 
     if not args.skip_preflight:
         req_envs = [e.strip() for e in args.require_env.split(",")] if args.require_env else None
@@ -936,12 +1101,18 @@ def main():
                 print(f"Warning: Could not launch Terminal window ({e}). Running in current process instead...")
 
         if launched:
+            lock_handed_off = True
             reused_str = "reused existing" if not args.new_terminal else "new window"
             print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str}) [{monitor_title}]!")
             print(f"👉 Command executing: {full_cmd}")
             print("⏳ Tests are now running live in the external Terminal window.")
             print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.")
             return 0
+
+    # For in-process or terminal-child runs, ensure lock is refreshed with current PID and cleanup registered
+    if enable_lock:
+        acquire_device_lock(device_id, str(args.target))
+        setup_lock_cleanup(device_id)
 
     # Output directory setup
     if args.output_dir:
@@ -1140,6 +1311,8 @@ def main():
             f.write(f"{token_line}\n")
         f.write(f"{final_banner}\n")
         f.write(f"📊 Summary report: {summary_md_path}\n")
+    if enable_lock:
+        release_device_lock(device_id)
     if interrupted:
         return 130
     return 0 if failed_count == 0 else 1
