@@ -57,6 +57,9 @@ def detect_device(device_arg=None):
     """Detects connected device ID or validates the provided one."""
     if device_arg:
         return device_arg
+    env_serial = os.environ.get("ANDROID_SERIAL")
+    if env_serial:
+        return env_serial.strip()
     try:
         out = run_adb("devices")
     except Exception as e:
@@ -66,7 +69,7 @@ def detect_device(device_arg=None):
     if not devices:
         sys.exit("BLOCKED: No Android device/emulator found via `adb devices`. Please start one.")
     if len(devices) > 1:
-        print(f"Multiple devices found: {devices}. Using first device: {devices[0]} (use --device to override)")
+        print(f"Multiple devices found: {devices}. Using first device: {devices[0]} (use --device to override or set ANDROID_SERIAL)")
     return devices[0]
 
 
@@ -828,6 +831,8 @@ def main():
             remaining_args.append("--_terminal-child")
         if "--skip-preflight" not in remaining_args:
             remaining_args.append("--skip-preflight")
+        if "--device" not in remaining_args:
+            remaining_args.extend(["--device", device_id])
         script_path = os.path.abspath(sys.argv[0])
         cwd = os.getcwd()
         quoted_args = " ".join([f'"{a}"' if " " in a else a for a in remaining_args])
@@ -836,10 +841,11 @@ def main():
         run_time = dt.datetime.now().strftime("%H:%M:%S")
         divider = "═" * 70
         clean_target = str(args.target).replace('"', '\\"')
+        monitor_title = f"Test Monitor [{device_id}]"
         banner_cmd = (
-            f"printf '\\033]0;Maestro Test Monitor\\007' && "
+            f"printf '\\033]0;{monitor_title}\\007' && "
             f"clear && "
-            f"printf '\\033[1;36m{divider}\\n🔄 [{run_time}] E2E RUN: {clean_target}\\n{divider}\\033[0m\\n\\n' && "
+            f"printf '\\033[1;36m{divider}\\n🔄 [{run_time}] E2E RUN ({device_id}): {clean_target}\\n{divider}\\033[0m\\n\\n' && "
         )
 
         full_cmd = (
@@ -865,7 +871,7 @@ def main():
                         repeat with t in tabs of w
                             repeat with s in sessions of t
                                 try
-                                    if name of s contains "Maestro Test Monitor" or name of w contains "Maestro Test Monitor" then
+                                    if name of s contains "{monitor_title}" or name of w contains "{monitor_title}" then
                                         set targetSession to s
                                         select w
                                         select t
@@ -907,7 +913,7 @@ def main():
                 if not {force_new_term} then
                     repeat with w in windows
                         try
-                            if name of w contains "Maestro Test Monitor" then
+                            if name of w contains "{monitor_title}" then
                                 set targetTab to selected tab of w
                                 set index of w to 1
                                 exit repeat
@@ -931,7 +937,7 @@ def main():
 
         if launched:
             reused_str = "reused existing" if not args.new_terminal else "new window"
-            print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str})!")
+            print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str}) [{monitor_title}]!")
             print(f"👉 Command executing: {full_cmd}")
             print("⏳ Tests are now running live in the external Terminal window.")
             print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.")
