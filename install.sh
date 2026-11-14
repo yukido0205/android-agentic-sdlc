@@ -77,7 +77,7 @@ install_into_dir() {
   local base_dir="$1"
   local include_hooks_json="$2"
 
-  mkdir -p "$base_dir/skills" "$base_dir/rules" "$base_dir/hooks/scripts"
+  mkdir -p "$base_dir/skills" "$base_dir/rules" "$base_dir/hooks/scripts" "$base_dir/scripts"
 
   for skill_path in "$REPO_DIR"/skills/*; do
     [[ -d "$skill_path" ]] || continue
@@ -87,6 +87,11 @@ install_into_dir() {
 
   link_or_copy "$REPO_DIR/rules/code-hygiene.md" "$base_dir/rules/code-hygiene.md"
   link_or_copy "$REPO_DIR/hooks/scripts/pre-tool-guard.py" "$base_dir/hooks/scripts/pre-tool-guard.py"
+
+  if [[ -f "$REPO_DIR/scripts/init-worktree.sh" ]]; then
+    link_or_copy "$REPO_DIR/scripts/init-worktree.sh" "$base_dir/scripts/init-worktree.sh"
+    link_or_copy "$REPO_DIR/scripts/init_worktree.py" "$base_dir/scripts/init_worktree.py"
+  fi
 
   if [[ "$include_hooks_json" == "true" ]]; then
     link_or_copy "$REPO_DIR/hooks/hooks.json" "$base_dir/hooks.json"
@@ -109,6 +114,11 @@ if [[ "$SCOPE" == "project" ]]; then
     install_into_dir "$PROJECT_DIR/.claude" "false"
     echo "✅ Installed for Claude Code              -> $PROJECT_DIR/.claude/ ($MODE)"
   fi
+
+  mkdir -p "$PROJECT_DIR/scripts"
+  link_or_copy "$REPO_DIR/scripts/init-worktree.sh" "$PROJECT_DIR/scripts/init-worktree.sh"
+  link_or_copy "$REPO_DIR/scripts/init_worktree.py" "$PROJECT_DIR/scripts/init_worktree.py"
+  echo "✅ Installed Worktree Initializer         -> $PROJECT_DIR/scripts/init-worktree.sh ($MODE)"
 elif [[ "$SCOPE" == "global" ]]; then
   if [[ "$TARGET" == "agy" || "$TARGET" == "all" ]]; then
     install_into_dir "$HOME/.gemini/config" "true"

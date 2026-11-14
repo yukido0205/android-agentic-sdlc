@@ -63,6 +63,7 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 - **`[domain-purity-guard]`:** Denies any file write/edit inside `/domain/` that introduces `import android.*` or `import androidx.*`.
 - **`[maestro-static-gate]`:** Denies `.maestro/**/*.yaml` writes/edits that violate `ac-NN-<slug>.yaml` naming, use hardcoded coordinate taps (`point: x, y`), or omit assertions.
 - **`[command-safety-guard]`:** Denies raw `maestro test` CLI invocations (enforcing `suite-runner.py` to prevent context bleed) and forces explicit user confirmation (`force_ask`) on destructive Git/ADB commands (`git reset --hard`, `git push --force`, `adb uninstall`).
+- **`[multi-device-guard]`:** Denies un-isolated `./gradlew ... install...` executions (<20ms) when $\ge 2$ emulators/devices are active without `ANDROID_SERIAL`, preventing cross-deployment collisions between parallel agents.
 
 ### 🛠️ Layer 3: 9 Specialized Agent Skills (`skills/`) — *On-Demand Workflows*
 
@@ -369,6 +370,13 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 9 s
 
   # Headless Flag: Suppresses external terminal (ideal for CI/CD or background runs)
   python3 skills/test-runner/scripts/suite-runner.py .maestro/ -m regression --headless
+
+  # Decoupled Build & Install for Parallel Agents (Mutex Lock Device Isolation)
+  # Step 1: Compile APK (zero emulator contact)
+  ./gradlew assembleDebug
+
+  # Step 2: Auto-lease available emulator, install APK isolated via ANDROID_SERIAL, and run tests
+  python3 skills/test-runner/scripts/suite-runner.py .maestro/02-checkout/ -m step --install
   ```
 - **Inputs:** Test directory path, test YAML file, or markdown state file containing a test matrix.
 - **Outputs:** Live ANSI streaming terminal, `progress.log`, failure screenshots (`issues/`), and token usage summary.
@@ -401,7 +409,51 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 9 s
 
 ---
 
-## 6. Repository Directory Structure
+## 6. Parallel Agent Isolation: Running 2 Agents on 1 Mac with 2 Emulators
+
+When running 2 autonomous AI Agents concurrently on a single Mac (e.g. Agent A fixing bug `PAY-101` on `emulator-5554`, Agent B delivering feature `PROJ-202` on `emulator-5556`), standard tools fail in three fatal ways:
+1. **APK Cross-Deployment Collision:** Default `./gradlew installDebug` targets **all running emulators simultaneously**, corrupting test environments across parallel agents.
+2. **Mac RAM Exhaustion (OOM Freezes):** If both agents invoke Gradle with default worker counts (CPU core count $\times 2 = 20+$ workers), macOS memory is rapidly exhausted, freezing the machine.
+3. **Missing Gitignored Configs in Worktrees:** Standard `git worktree add` only checks out tracked files, leaving out vital Android files (`local.properties`, `keystore.properties`, `google-services.json`, `.agents/`, `.claude/`), breaking Gradle builds and stripping agent skills.
+
+`android-agentic-sdlc` provides a comprehensive **0-Token Isolation Trinity**:
+
+### 🛡️ 1. Zero-Token Android Worktree Initializer (`scripts/init-worktree.sh` — <0.2s)
+Generates an isolated workspace per ticket with zero LLM tokens:
+```bash
+./scripts/init-worktree.sh PAY-101
+# or with a custom branch:
+./scripts/init-worktree.sh PAY-101 -b feature/pay-checkout
+```
+- **Automatic Setup:** Creates `.worktrees/<TICKET>` and appends `.worktrees/` to root `.gitignore`.
+- **Automatic Symlinks for Vital Android & Agent Files:**
+  - `local.properties` (contains required Android SDK path `sdk.dir`).
+  - `keystore.properties`, `secrets.properties` (signing configurations).
+  - `google-services.json` (at root and across all submodules).
+  - `.agents/` and `.claude/` (replicates all 9 Skills, Rules, and Pre-tool Guard hooks into the worktree).
+- **RAM Protection:** Injects `org.gradle.workers.max=2` into `.worktrees/<TICKET>/gradle.properties` to ensure concurrent Gradle daemons remain lean without exhausting system memory.
+
+### 🔒 2. Decoupled Build & Install via Mutex Device Lock (`suite-runner.py --install`)
+Eliminates untargeted installation commands:
+- **Build Phase (No device touch):** `./gradlew assembleDebug` (generates APK artifact only).
+- **Isolated Install Phase:** Execute `suite-runner.py` with `--install`:
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py .maestro/PAY-101/ -m step --install
+  ```
+  `suite-runner.py` automatically:
+  1. Inspects active emulators and **acquires a mutex lock (`/tmp/android_device_locks/<id>.lock`)** on an idle device.
+  2. Sets `ANDROID_SERIAL=<locked_device_id>`.
+  3. Deploys the APK exclusively to that device (`adb -s <locked_device_id> install -r -t -d ...`).
+  4. Runs Maestro test flows against the locked emulator in total isolation.
+
+### ⚡ 3. Mechanical Pre-Tool Gate Against Collision (`pre-tool-guard.py` — <20ms)
+If an agent attempts to run `./gradlew ... install...` without specifying `ANDROID_SERIAL` when 2 or more devices are active:
+- The mechanical guard `pre-tool-guard.py` intercepts and **denies the command in <20ms**.
+- Guides the agent to decoupled build (`./gradlew assembleDebug`) and isolated installation (`suite-runner.py --install`).
+
+---
+
+## 7. Repository Directory Structure
 
 ```text
 android-agentic-sdlc/
@@ -410,10 +462,13 @@ android-agentic-sdlc/
 ├── README.md                     # Usage manual & synergy pipelines (English)
 ├── README_VI.md                  # Usage manual & synergy pipelines (Vietnamese)
 ├── install.sh                    # 1-click installer for Antigravity, Gemini CLI, and Claude Code
+├── scripts/
+│   ├── init-worktree.sh          # Zero-token Android Worktree initializer script (<0.2s)
+│   └── init_worktree.py          # Cross-platform Python worktree initializer
 ├── hooks/
 │   ├── hooks.json                # PreToolUse lifecycle hook configuration
 │   └── scripts/
-│       └── pre-tool-guard.py     # <20ms mechanical guard (Domain purity, Maestro YAML, CLI safety)
+│       └── pre-tool-guard.py     # <20ms mechanical guard (Domain purity, Maestro YAML, CLI & Multi-device safety)
 ├── rules/
 │   └── code-hygiene.md           # Always-on rule: Lean SOLID + Why-only Docs + YAGNI Simplify
 └── skills/

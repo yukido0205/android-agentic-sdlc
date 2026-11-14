@@ -63,6 +63,7 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 - **`[domain-purity-guard]`:** Từ chối ngay lập tức (`deny`) nếu AI cố tình ghi/sửa file `.kt` trong thư mục `/domain/` mà có chứa `import android.*` hoặc `import androidx.*`.
 - **`[maestro-static-gate]`:** Từ chối (`deny`) ngay lúc lưu file `.maestro/**/*.yaml` nếu đặt sai tên chuẩn `ac-NN-<slug>.yaml`, dùng tọa độ chạm cứng (`point: x, y`), hoặc quên viết câu lệnh `assertVisible`/`assertTrue`.
 - **`[command-safety-guard]`:** Từ chối (`deny`) lệnh chạy `maestro test` thô trên terminal (bắt buộc đi qua `suite-runner.py` để chống tràn token) và bật hộp thoại xác nhận bắt buộc (`force_ask`) với các lệnh nguy hiểm (`git reset --hard`, `git push --force`, `adb uninstall`).
+- **`[multi-device-guard]`:** Từ chối ngay lập tức (`deny`, `<20ms`) nếu Agent gõ `./gradlew ... install...` khi có $\ge 2$ emulator/thiết bị bật mà không gắn `ANDROID_SERIAL`, ngăn Gradle bắn đè APK chéo giữa các phiên Agent đang chạy song song.
 
 ### 🛠️ Tầng 3: Danh Mục 9 Kỹ Năng Chuyên Biệt (`skills/`) — *Quy Trình Theo Ngữ Cảnh*
 
@@ -367,6 +368,13 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
   # Cờ Headless: Tắt cửa sổ terminal ngoài, chạy thẳng trong shell (cho CI/CD hoặc background)
   python3 skills/test-runner/scripts/suite-runner.py .maestro/ -m regression --headless
+
+  # Tách bước Build & Install khi chạy song song 2 Agent (Cô lập cài đặt theo Mutex Lock)
+  # Bước 1: Build APK (không đụng tới emulator)
+  ./gradlew assembleDebug
+
+  # Bước 2: Tự chiếm emulator rảnh, cài APK độc quyền bằng ANDROID_SERIAL và chạy test
+  python3 skills/test-runner/scripts/suite-runner.py .maestro/02-checkout/ -m step --install
   ```
 - **Đầu vào:** Thư mục chứa kịch bản Maestro, file YAML đơn lẻ hoặc file trạng thái markdown chứa ma trận test.
 - **Đầu ra:** Cửa sổ Terminal stream ANSI trực tiếp, `progress.log`, thư mục báo cáo lỗi `issues/`, và thống kê token sử dụng.
@@ -399,7 +407,51 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
 ---
 
-## 6. Cấu Trúc Thư Mục Repository
+## 6. Chạy Song Song 2 Agent Trên Cùng 1 Máy Mac Với 2 Emulator (Parallel Agent Isolation)
+
+Khi chạy 2 AI Agent độc lập cùng lúc trên 1 máy Mac (ví dụ: Agent A sửa bug `PAY-101` trên `emulator-5554`, Agent B triển khai tính năng `PROJ-202` trên `emulator-5556`), 3 vấn đề chí tử sẽ xảy ra nếu không có cơ chế cô lập:
+1. **Xung đột ghi đè APK (APK Cross-Deployment Collision):** Lệnh `./gradlew installDebug` mặc định sẽ bắn APK đè lên **tất cả emulator đang bật**, làm hỏng môi trường test của Agent bên cạnh.
+2. **Tràn RAM máy Mac (OOM Freeze):** Cả 2 Agent cùng gọi Gradle song song với số workers mặc định (thường bằng số core CPU, e.g. 10 workers $\times$ 2 = 20 Gradle workers) sẽ ngốn sạch 32GB/64GB RAM khiến macOS bị đứng hình (freeze).
+3. **Mất config sống còn khi dùng Git Worktree:** `git worktree add` chỉ checkout code được track; các file `.gitignore` sống còn (`local.properties`, `keystore.properties`, `google-services.json`, `.agents/`, `.claude/`) bị bỏ rơi khiến Gradle build lỗi thiếu SDK và Agent mất toàn bộ bộ skill/hook.
+
+`android-agentic-sdlc` giải quyết triệt để bài toán này bằng **Bộ ba cơ chế cô lập tự động (0-Token Isolation Trinity)**:
+
+### 🛡️ 1. Script Khởi Tạo Worktree Chuẩn Android (`scripts/init-worktree.sh` — 0-Token, <0.2s)
+Tự động dựng workspace độc lập cho từng ticket mà không tốn bất kỳ 1 token LLM nào:
+```bash
+./scripts/init-worktree.sh PAY-101
+# hoặc chỉ định branch riêng:
+./scripts/init-worktree.sh PAY-101 -b feature/pay-checkout
+```
+- **Tự động tạo:** Thư mục `.worktrees/<TICKET>` và thêm `.worktrees/` vào `.gitignore` gốc.
+- **Tự động Symlink các file Android & Agent sống còn:**
+  - `local.properties` (chứa `sdk.dir` bắt buộc cho Gradle).
+  - `keystore.properties`, `secrets.properties` (cấu hình ký app).
+  - `google-services.json` (ở root và toàn bộ các sub-modules).
+  - `.agents/` và `.claude/` (đồng bộ toàn bộ 9 Skills, Rules và Pre-tool Guard Hook sang worktree).
+- **Giới hạn RAM máy Mac:** Tự động tiêm `org.gradle.workers.max=2` vào `gradle.properties` của worktree để hạn chế tối đa tài nguyên, đảm bảo 2 Gradle daemon chạy song song mượt mà.
+
+### 🔒 2. Tách Bước Build & Install Theo Device Mutex Lock (`suite-runner.py --install`)
+Thay vì để Agent gõ lệnh install bừa bãi:
+- **Bước Build (Không đụng thiết bị):** `./gradlew assembleDebug` (chỉ tạo file APK).
+- **Bước Install Độc Quyền:** Chạy `suite-runner.py` với cờ `--install`:
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py .maestro/PAY-101/ -m step --install
+  ```
+  `suite-runner.py` tự động:
+  1. Kiểm tra các emulator đang bật và **chiếm Mutex Lock (`/tmp/android_device_locks/<id>.lock`)** trên emulator đang rảnh.
+  2. Gán biến môi trường `ANDROID_SERIAL=<locked_device_id>`.
+  3. Cài APK độc quyền vào đúng emulator đó (`adb -s <locked_device_id> install -r -t -d ...`).
+  4. Chạy bộ test Maestro trên đúng emulator đó mà không chạm tới emulator của Agent kia.
+
+### ⚡ 3. Chốt Chặn Cơ Học Chống Bắn Đè APK (`pre-tool-guard.py` — <20ms)
+Nếu bất kỳ Agent nào vi phạm và gõ lệnh dạng `./gradlew ... install...` khi máy đang bật $\ge 2$ emulator mà không gắn `ANDROID_SERIAL`:
+- Hook cơ học `pre-tool-guard.py` lập tức **chặn đứng (`deny`) trong <20ms**.
+- Trả về thông báo hướng dẫn Agent chuyển sang quy trình chuẩn: `./gradlew assembleDebug` kết hợp `suite-runner.py --install`.
+
+---
+
+## 7. Cấu Trúc Thư Mục Repository
 
 ```text
 android-agentic-sdlc/
@@ -408,10 +460,13 @@ android-agentic-sdlc/
 ├── README.md                     # Hướng dẫn sử dụng & 3 chuỗi kết hợp (Tiếng Anh)
 ├── README_VI.md                  # Hướng dẫn sử dụng & 3 chuỗi kết hợp (Tiếng Việt)
 ├── install.sh                    # Script cài đặt 1 chạm cho Antigravity, Gemini CLI & Claude Code
+├── scripts/
+│   ├── init-worktree.sh          # Script khởi tạo Android Worktree chuẩn, 0-token (<0.2s)
+│   └── init_worktree.py          # Bản Python cross-platform của bộ khởi tạo worktree
 ├── hooks/
 │   ├── hooks.json                # Cấu hình PreToolUse lifecycle hook
 │   └── scripts/
-│       └── pre-tool-guard.py     # Chốt chặn cơ học <20ms (Domain purity, Maestro YAML, CLI safety)
+│       └── pre-tool-guard.py     # Chốt chặn cơ học <20ms (Domain purity, Maestro YAML, CLI & Multi-device safety)
 ├── rules/
 │   └── code-hygiene.md           # Quy tắc nền luôn bật: Lean SOLID + Why-only Docs + YAGNI Simplify
 └── skills/
