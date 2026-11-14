@@ -4,7 +4,7 @@
 > 📐 **Case Studies & Tư Duy Kiến Trúc:** [Tiếng Việt (OVERVIEW_VI.md)](./OVERVIEW_VI.md) | [English (OVERVIEW.md)](./OVERVIEW.md)
 
 > **Hệ thống điều phối kỹ thuật (Engineering Harness) chuẩn Production dành cho đội ngũ Android & Kotlin.**  
-> Kết hợp **9 Kỹ năng AI Agent theo vòng đời SDLC**, **1 Quy tắc nền luôn bật (`rules/code-hygiene.md`)**, và **1 Chốt chặn Hook cơ học (`hooks/hooks.json`)**—biến các trợ lý lập trình AI từ công cụ sinh code tự phát thành cộng sự phát triển phần mềm có kỷ luật, kiểm soát hồi quy tuyệt đối.
+> Kết hợp **10 Kỹ năng AI Agent theo vòng đời SDLC**, **1 Quy tắc nền luôn bật (`rules/code-hygiene.md`)**, và **1 Chốt chặn Hook cơ học (`hooks/hooks.json`)**—biến các trợ lý lập trình AI từ công cụ sinh code tự phát thành cộng sự phát triển phần mềm có kỷ luật, kiểm soát hồi quy tuyệt đối.
 
 ---
 
@@ -45,7 +45,7 @@ flowchart LR
         H["hooks/pre-tool-guard.py<br/>• Chặn android.* trong /domain/<br/>• Chặn point: tap trong Maestro<br/>• Chặn maestro CLI thô & git --force"]
     end
 
-    subgraph L3["🛠️ Tầng 3: Kỹ Năng Chuyên Biệt (9 SDLC Skills)"]
+    subgraph L3["🛠️ Tầng 3: Kỹ Năng Chuyên Biệt (10 SDLC Skills)"]
         S["plan-*  •  code-*  •  guard-*<br/>test-*  •  flow-*  •  ship-*<br/>Chỉ nạp vào ngữ cảnh khi được gọi"]
     end
 
@@ -65,7 +65,7 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 - **`[command-safety-guard]`:** Từ chối (`deny`) lệnh chạy `maestro test` thô trên terminal (bắt buộc đi qua `suite-runner.py` để chống tràn token) và bật hộp thoại xác nhận bắt buộc (`force_ask`) với các lệnh nguy hiểm (`git reset --hard`, `git push --force`, `adb uninstall`).
 - **`[multi-device-guard]`:** Từ chối ngay lập tức (`deny`, `<20ms`) nếu Agent gõ `./gradlew ... install...` khi có $\ge 2$ emulator/thiết bị bật mà không gắn `ANDROID_SERIAL`, ngăn Gradle bắn đè APK chéo giữa các phiên Agent đang chạy song song.
 
-### 🛠️ Tầng 3: Danh Mục 9 Kỹ Năng Chuyên Biệt (`skills/`) — *Quy Trình Theo Ngữ Cảnh*
+### 🛠️ Tầng 3: Danh Mục 10 Kỹ Năng Chuyên Biệt (`skills/`) — *Quy Trình Theo Ngữ Cảnh*
 
 | Kỹ năng (Skill) | Thư mục | Lệnh kích hoạt / CLI | Nhóm SDLC | Vai trò cốt lõi |
 | :--- | :--- | :--- | :--- | :--- |
@@ -77,6 +77,7 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 | **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Soạn thảo) | Viết kịch bản test Maestro YAML chuẩn ngữ nghĩa, kiểm tra tĩnh qua `validate-flow.py`. |
 | **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test quy mô lớn, stream live ANSI ra terminal, chụp màn hình lỗi và 0 tốn token khi pass. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Nhạc trưởng) | Điều phối toàn diện vòng đời bug (Hiểu $\to$ Sửa $\to$ Chứng minh $\to$ Ship), người chỉ duyệt 3 cổng. |
+| **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Nhạc trưởng) | Điều phối trọn gói task tính năng/cải tiến lẻ giữa sprint không cần CONTRACT.md, chỉ duyệt 3 cổng. |
 | **`ship-mr`** | `skills/ship-mr` | `/ship-mr` | Ship (Xuất xưởng) | Kiểm toán git diff, đối chiếu mệnh đề nhân quả và bằng chứng test; tạo commit & nội dung MR. |
 
 ---
@@ -396,7 +397,22 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
 ---
 
-### 5.9. `ship-mr` — Kiểm Toán Diff & Soạn Thảo Merge Request Kèm Bằng Chứng
+### 5.9. `flow-task` — Nhạc Trưởng Tự Động Hóa Toàn Diện Task Tính Năng Lẻ
+- **Khi nào sử dụng:** Khi được giao 1 task tính năng hoặc cải tiến độc lập giữa sprint mà không có sẵn `CONTRACT.md` (Hiểu $\to$ Build $\to$ Chứng minh $\to$ Xuất xưởng).
+- **Lệnh kích hoạt / Cú pháp:**
+  ```bash
+  # Bắt đầu xử lý task lẻ
+  /flow-task APP-105 "Thêm bottom sheet chọn voucher"
+
+  # Tiếp tục phiên làm việc dở dang
+  /flow-task resume APP-105
+  ```
+- **Đầu vào:** Mã ticket và mô tả ngắn gọn yêu cầu.
+- **Đầu ra:** File theo dõi trạng thái tinh gọn `plans/<TICKET>/flow-task.md`, code tính năng kèm kịch bản test trên emulator, và branch git sẵn sàng merge.
+
+---
+
+### 5.10. `ship-mr` — Kiểm Toán Diff & Soạn Thảo Merge Request Kèm Bằng Chứng
 - **Khi nào sử dụng:** Sau khi hoàn thành code và test, cần kiểm toán lại diff và viết nội dung PR chỉn chu.
 - **Lệnh kích hoạt / Cú pháp:**
   ```bash
@@ -478,5 +494,6 @@ android-agentic-sdlc/
     ├── test-author/              # Bộ tạo & kiểm tra tĩnh kịch bản test Maestro YAML
     ├── test-runner/              # Bộ chạy test trên thiết bị & stream terminal
     ├── flow-bug/                 # Nhạc trưởng điều phối sửa bug khép kín
+    ├── flow-task/                # Nhạc trưởng điều phối task tính năng lẻ (không cần CONTRACT.md)
     └── ship-mr/                  # Kiểm toán diff & viết mô tả Merge Request
 ```
