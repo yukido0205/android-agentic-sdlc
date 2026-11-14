@@ -4,7 +4,7 @@
 > 📐 **Architecture & Case Studies:** [English (OVERVIEW.md)](./OVERVIEW.md) | [Tiếng Việt (OVERVIEW_VI.md)](./OVERVIEW_VI.md)
 
 > **A production-grade engineering harness for Android & Kotlin teams.**  
-> Powered by **10 Specialized SDLC Agent Skills**, **1 Always-On Core Rule (`rules/code-hygiene.md`)**, and **1 Zero-Token PreToolUse Hook (`hooks/hooks.json`)**—built to turn AI coding assistants from unpredictable code generators into disciplined, regression-free mobile engineering partners.
+> Powered by **11 Specialized SDLC Agent Skills**, **1 Always-On Core Rule (`rules/code-hygiene.md`)**, and **1 Zero-Token PreToolUse Hook (`hooks/hooks.json`)**—built to turn AI coding assistants from unpredictable code generators into disciplined, regression-free mobile engineering partners.
 
 ---
 
@@ -45,7 +45,7 @@ flowchart LR
         H["hooks/pre-tool-guard.py<br/>• Blocks android.* in /domain/<br/>• Blocks point: taps in Maestro<br/>• Blocks raw maestro CLI & git --force"]
     end
 
-    subgraph L3["🛠️ Layer 3: On-Demand Workflows (9 SDLC Skills)"]
+    subgraph L3["🛠️ Layer 3: On-Demand Workflows (11 SDLC Skills)"]
         S["plan-*  •  code-*  •  guard-*<br/>test-*  •  flow-*  •  ship-*<br/>Loaded only when invoked"]
     end
 
@@ -65,7 +65,7 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 - **`[command-safety-guard]`:** Denies raw `maestro test` CLI invocations (enforcing `suite-runner.py` to prevent context bleed) and forces explicit user confirmation (`force_ask`) on destructive Git/ADB commands (`git reset --hard`, `git push --force`, `adb uninstall`).
 - **`[multi-device-guard]`:** Denies un-isolated `./gradlew ... install...` executions (<20ms) when $\ge 2$ emulators/devices are active without `ANDROID_SERIAL`, preventing cross-deployment collisions between parallel agents.
 
-### 🛠️ Layer 3: 10 Specialized Agent Skills (`skills/`) — *On-Demand Workflows*
+### 🛠️ Layer 3: 11 Specialized Agent Skills (`skills/`) — *On-Demand Workflows*
 
 | Skill | Directory | Triggers / CLI Command | SDLC Phase | Core Role |
 | :--- | :--- | :--- | :--- | :--- |
@@ -78,6 +78,7 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 | **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` or CLI | Test (Execution) | High-volume test runner with live ANSI terminal streaming, failure snapshots, and 0-token-bleed presets. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Orchestration) | Complete bug lifecycle orchestrator (Understand $\to$ Fix $\to$ Prove $\to$ Ship) with 3 human review gates. |
 | **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Orchestration) | Standalone sprint task orchestrator (Understand $\to$ Build $\to$ Prove $\to$ Ship) without an upfront contract. |
+| **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Multi-Task) | Single-chat multi-agent orchestrator with isolated worktrees, 0-token live monitor, and batched Gate approvals. |
 | **`ship-mr`** | `skills/ship-mr` | `/ship-mr` | Ship (Delivery) | Audits git diffs against test evidence & verified claims; drafts conventional commits and MR bodies. |
 
 ---
@@ -202,7 +203,7 @@ flowchart LR
 
 ### 4.2. Quick Installation (`install.sh` — Antigravity, Gemini CLI & Claude Code)
 
-Clone this repository once on your machine, then use [`install.sh`](./install.sh) to symlink (or `--copy`) all 9 skills, the always-on rule, and the PreToolUse hook into your Android project or global configuration:
+Clone this repository once on your machine, then use [`install.sh`](./install.sh) to symlink (or `--copy`) all 11 skills, the always-on rule, and the PreToolUse hook into your Android project or global configuration:
 
 ```bash
 git clone https://github.com/yukido0205/android-agentic-sdlc.git
@@ -241,9 +242,9 @@ If you prefer manual setup without `install.sh`, place or symlink the folders as
 
 ---
 
-## 5. Detailed Command Reference (The 9 Core Skills)
+## 5. Detailed Command Reference (The 11 Core Skills)
 
-Below are the exact triggers, syntax, arguments, inputs, and outputs for all 9 skills:
+Below are the exact triggers, syntax, arguments, inputs, and outputs for all 11 skills:
 
 ### 5.1. `plan-feature` — Lean Requirements & User Stories
 - **When to Use:** When starting a new feature from a raw PRD, Figma link, Jira epic, or vague request.
@@ -414,7 +415,19 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 9 s
 
 ---
 
-### 5.10. `ship-mr` — Diff Auditing & Review Description Author
+### 5.10. `flow-queue` — Multi-Task Orchestrator & Live Queue Monitor
+- **When to Use:** When pasting a batch of bugs and standalone tasks into **1 single chat prompt** to run concurrently in isolated worktrees with batched Gate approvals.
+- **Trigger / Commands:**
+  ```bash
+  /flow-queue PAY-101 (bug: crash on rotate), APP-105 (task: add date filter)
+  /flow-queue status
+  ```
+- **Inputs:** List of ticket IDs and short briefs (auto-routed to `flow-bug` or `flow-task`).
+- **Outputs:** Provisioned `.worktrees/<TICKET>` sandboxes, live `SDLC Queue Monitor` Terminal dashboard (`0` LLM tokens), and batched Gate 1/2/3 approvals.
+
+---
+
+### 5.11. `ship-mr` — Diff Auditing & Review Description Author
 - **When to Use:** After implementation and verification, to audit git diff and generate conventional commit and MR body.
 - **Trigger / Command:**
   ```bash
@@ -446,7 +459,7 @@ Generates an isolated workspace per ticket with zero LLM tokens:
   - `local.properties` (contains required Android SDK path `sdk.dir`).
   - `keystore.properties`, `secrets.properties` (signing configurations).
   - `google-services.json` (at root and across all submodules).
-  - `.agents/` and `.claude/` (replicates all 9 Skills, Rules, and Pre-tool Guard hooks into the worktree).
+  - `.agents/` and `.claude/` (replicates all 11 Skills, Rules, and Pre-tool Guard hooks into the worktree).
 - **RAM Protection:** Injects `org.gradle.workers.max=2` into `.worktrees/<TICKET>/gradle.properties` to ensure concurrent Gradle daemons remain lean without exhausting system memory.
 
 ### 🔒 2. Decoupled Build & Install via Mutex Device Lock (`suite-runner.py --install`)
@@ -497,5 +510,6 @@ android-agentic-sdlc/
     ├── test-runner/              # High-volume device test runner & monitor
     ├── flow-bug/                 # End-to-end bug lifecycle orchestrator
     ├── flow-task/                # Standalone sprint task orchestrator (without CONTRACT.md)
+    ├── flow-queue/               # Single-chat multi-task orchestrator & 0-token live monitor
     └── ship-mr/                  # Diff auditor & Merge Request description author
 ```

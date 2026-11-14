@@ -4,7 +4,7 @@
 > 📐 **Case Studies & Tư Duy Kiến Trúc:** [Tiếng Việt (OVERVIEW_VI.md)](./OVERVIEW_VI.md) | [English (OVERVIEW.md)](./OVERVIEW.md)
 
 > **Hệ thống điều phối kỹ thuật (Engineering Harness) chuẩn Production dành cho đội ngũ Android & Kotlin.**  
-> Kết hợp **10 Kỹ năng AI Agent theo vòng đời SDLC**, **1 Quy tắc nền luôn bật (`rules/code-hygiene.md`)**, và **1 Chốt chặn Hook cơ học (`hooks/hooks.json`)**—biến các trợ lý lập trình AI từ công cụ sinh code tự phát thành cộng sự phát triển phần mềm có kỷ luật, kiểm soát hồi quy tuyệt đối.
+> Kết hợp **11 Kỹ năng AI Agent theo vòng đời SDLC**, **1 Quy tắc nền luôn bật (`rules/code-hygiene.md`)**, và **1 Chốt chặn Hook cơ học (`hooks/hooks.json`)**—biến các trợ lý lập trình AI từ công cụ sinh code tự phát thành cộng sự phát triển phần mềm có kỷ luật, kiểm soát hồi quy tuyệt đối.
 
 ---
 
@@ -45,7 +45,7 @@ flowchart LR
         H["hooks/pre-tool-guard.py<br/>• Chặn android.* trong /domain/<br/>• Chặn point: tap trong Maestro<br/>• Chặn maestro CLI thô & git --force"]
     end
 
-    subgraph L3["🛠️ Tầng 3: Kỹ Năng Chuyên Biệt (10 SDLC Skills)"]
+    subgraph L3["🛠️ Tầng 3: Kỹ Năng Chuyên Biệt (11 SDLC Skills)"]
         S["plan-*  •  code-*  •  guard-*<br/>test-*  •  flow-*  •  ship-*<br/>Chỉ nạp vào ngữ cảnh khi được gọi"]
     end
 
@@ -65,7 +65,7 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 - **`[command-safety-guard]`:** Từ chối (`deny`) lệnh chạy `maestro test` thô trên terminal (bắt buộc đi qua `suite-runner.py` để chống tràn token) và bật hộp thoại xác nhận bắt buộc (`force_ask`) với các lệnh nguy hiểm (`git reset --hard`, `git push --force`, `adb uninstall`).
 - **`[multi-device-guard]`:** Từ chối ngay lập tức (`deny`, `<20ms`) nếu Agent gõ `./gradlew ... install...` khi có $\ge 2$ emulator/thiết bị bật mà không gắn `ANDROID_SERIAL`, ngăn Gradle bắn đè APK chéo giữa các phiên Agent đang chạy song song.
 
-### 🛠️ Tầng 3: Danh Mục 10 Kỹ Năng Chuyên Biệt (`skills/`) — *Quy Trình Theo Ngữ Cảnh*
+### 🛠️ Tầng 3: Danh Mục 11 Kỹ Năng Chuyên Biệt (`skills/`) — *Quy Trình Theo Ngữ Cảnh*
 
 | Kỹ năng (Skill) | Thư mục | Lệnh kích hoạt / CLI | Nhóm SDLC | Vai trò cốt lõi |
 | :--- | :--- | :--- | :--- | :--- |
@@ -78,6 +78,7 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 | **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test quy mô lớn, stream live ANSI ra terminal, chụp màn hình lỗi và 0 tốn token khi pass. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Nhạc trưởng) | Điều phối toàn diện vòng đời bug (Hiểu $\to$ Sửa $\to$ Chứng minh $\to$ Ship), người chỉ duyệt 3 cổng. |
 | **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Nhạc trưởng) | Điều phối trọn gói task tính năng/cải tiến lẻ giữa sprint không cần CONTRACT.md, chỉ duyệt 3 cổng. |
+| **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Đa Tác Vụ) | Điều phối nhiều task trên 1 chat với worktree cô lập, bảng live 0-token và gom duyệt Gate tập trung. |
 | **`ship-mr`** | `skills/ship-mr` | `/ship-mr` | Ship (Xuất xưởng) | Kiểm toán git diff, đối chiếu mệnh đề nhân quả và bằng chứng test; tạo commit & nội dung MR. |
 
 ---
@@ -202,7 +203,7 @@ flowchart LR
 
 ### 4.2. Cài Đặt Tự Động Bằng 1 Lệnh (`install.sh` — Hỗ Trợ Antigravity, Gemini CLI & Claude Code)
 
-Clone bộ công cụ này về máy, sau đó chạy [`install.sh`](./install.sh) để tạo symlink (hoặc `--copy`) toàn bộ 9 Skills, 1 Rule và 1 Hook vào dự án Android hoặc cài Global cho toàn máy:
+Clone bộ công cụ này về máy, sau đó chạy [`install.sh`](./install.sh) để tạo symlink (hoặc `--copy`) toàn bộ 11 Skills, 1 Rule và 1 Hook vào dự án Android hoặc cài Global cho toàn máy:
 
 ```bash
 git clone https://github.com/yukido0205/android-agentic-sdlc.git
@@ -241,7 +242,7 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
 ---
 
-## 5. Cẩm Nang Tra Cứu Chi Tiết Cho 9 Kỹ Năng Cốt Lõi
+## 5. Cẩm Nang Tra Cứu Chi Tiết Cho 11 Kỹ Năng Cốt Lõi
 
 ### 5.1. `plan-feature` — Chuẩn Hóa Yêu Cầu & Kịch Bản User Story
 - **Khi nào sử dụng:** Khi bắt đầu một tính năng mới từ file PRD thô, link thiết kế Figma, epic Jira hoặc yêu cầu sơ khai từ người dùng.
@@ -412,7 +413,19 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
 ---
 
-### 5.10. `ship-mr` — Kiểm Toán Diff & Soạn Thảo Merge Request Kèm Bằng Chứng
+### 5.10. `flow-queue` — Điều Phối Đa Task Trên 1 Chat & Live Queue Monitor
+- **Khi nào sử dụng:** Khi muốn thả cả danh sách bug và task tính năng lẻ vào **1 cửa sổ chat duy nhất** để chạy song song trên các worktree cô lập và gom duyệt Gate tập trung.
+- **Lệnh kích hoạt / Cú pháp:**
+  ```bash
+  /flow-queue PAY-101 (bug: crash xoay màn hình), APP-105 (task: thêm lọc theo ngày)
+  /flow-queue status
+  ```
+- **Đầu vào:** Danh sách mã ticket và mô tả ngắn (tự động điều phối vào `flow-bug` hoặc `flow-task`).
+- **Đầu ra:** Các sandbox `.worktrees/<TICKET>`, cửa sổ Terminal `SDLC Queue Monitor` cập nhật live (`0` token LLM) và bảng gom duyệt Gate 1/2/3.
+
+---
+
+### 5.11. `ship-mr` — Kiểm Toán Diff & Soạn Thảo Merge Request Kèm Bằng Chứng
 - **Khi nào sử dụng:** Sau khi hoàn thành code và test, cần kiểm toán lại diff và viết nội dung PR chỉn chu.
 - **Lệnh kích hoạt / Cú pháp:**
   ```bash
@@ -444,7 +457,7 @@ Tự động dựng workspace độc lập cho từng ticket mà không tốn b�
   - `local.properties` (chứa `sdk.dir` bắt buộc cho Gradle).
   - `keystore.properties`, `secrets.properties` (cấu hình ký app).
   - `google-services.json` (ở root và toàn bộ các sub-modules).
-  - `.agents/` và `.claude/` (đồng bộ toàn bộ 9 Skills, Rules và Pre-tool Guard Hook sang worktree).
+  - `.agents/` và `.claude/` (đồng bộ toàn bộ 11 Skills, Rules và Pre-tool Guard Hook sang worktree).
 - **Giới hạn RAM máy Mac:** Tự động tiêm `org.gradle.workers.max=2` vào `gradle.properties` của worktree để hạn chế tối đa tài nguyên, đảm bảo 2 Gradle daemon chạy song song mượt mà.
 
 ### 🔒 2. Tách Bước Build & Install Theo Device Mutex Lock (`suite-runner.py --install`)
@@ -495,5 +508,6 @@ android-agentic-sdlc/
     ├── test-runner/              # Bộ chạy test trên thiết bị & stream terminal
     ├── flow-bug/                 # Nhạc trưởng điều phối sửa bug khép kín
     ├── flow-task/                # Nhạc trưởng điều phối task tính năng lẻ (không cần CONTRACT.md)
+    ├── flow-queue/               # Nhạc trưởng điều phối đa task trên 1 chat & live monitor 0-token
     └── ship-mr/                  # Kiểm toán diff & viết mô tả Merge Request
 ```
