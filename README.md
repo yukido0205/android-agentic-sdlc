@@ -4,7 +4,7 @@
 > 📐 **Architecture & Case Studies:** [English (OVERVIEW.md)](./OVERVIEW.md) | [Tiếng Việt (OVERVIEW_VI.md)](./OVERVIEW_VI.md)
 
 > **A production-grade engineering harness for Android & Kotlin teams.**  
-> Powered by **9 Specialized SDLC Agent Skills**, **1 Always-On Core Rule (`rules/code-hygiene.md`)**, and **1 Zero-Token PreToolUse Hook (`hooks/hooks.json`)**—built to turn AI coding assistants from unpredictable code generators into disciplined, regression-free mobile engineering partners.
+> Powered by **10 Specialized SDLC Agent Skills**, **1 Always-On Core Rule (`rules/code-hygiene.md`)**, and **1 Zero-Token PreToolUse Hook (`hooks/hooks.json`)**—built to turn AI coding assistants from unpredictable code generators into disciplined, regression-free mobile engineering partners.
 
 ---
 
@@ -65,7 +65,7 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 - **`[command-safety-guard]`:** Denies raw `maestro test` CLI invocations (enforcing `suite-runner.py` to prevent context bleed) and forces explicit user confirmation (`force_ask`) on destructive Git/ADB commands (`git reset --hard`, `git push --force`, `adb uninstall`).
 - **`[multi-device-guard]`:** Denies un-isolated `./gradlew ... install...` executions (<20ms) when $\ge 2$ emulators/devices are active without `ANDROID_SERIAL`, preventing cross-deployment collisions between parallel agents.
 
-### 🛠️ Layer 3: 9 Specialized Agent Skills (`skills/`) — *On-Demand Workflows*
+### 🛠️ Layer 3: 10 Specialized Agent Skills (`skills/`) — *On-Demand Workflows*
 
 | Skill | Directory | Triggers / CLI Command | SDLC Phase | Core Role |
 | :--- | :--- | :--- | :--- | :--- |
@@ -77,6 +77,7 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 | **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Authoring) | Authors deterministic, semantic Maestro YAML test flows validated by `validate-flow.py`. |
 | **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` or CLI | Test (Execution) | High-volume test runner with live ANSI terminal streaming, failure snapshots, and 0-token-bleed presets. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Orchestration) | Complete bug lifecycle orchestrator (Understand $\to$ Fix $\to$ Prove $\to$ Ship) with 3 human review gates. |
+| **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Orchestration) | Standalone sprint task orchestrator (Understand $\to$ Build $\to$ Prove $\to$ Ship) without an upfront contract. |
 | **`ship-mr`** | `skills/ship-mr` | `/ship-mr` | Ship (Delivery) | Audits git diffs against test evidence & verified claims; drafts conventional commits and MR bodies. |
 
 ---
@@ -398,7 +399,22 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 9 s
 
 ---
 
-### 5.9. `ship-mr` — Diff Auditing & Review Description Author
+### 5.9. `flow-task` — Autonomous Standalone Sprint Task Orchestrator
+- **When to Use:** For single-command resolution of an isolated mid-sprint feature or enhancement ticket without an upfront `CONTRACT.md` (Understand $\to$ Build $\to$ Prove $\to$ Ship).
+- **Trigger / Commands:**
+  ```bash
+  # Start standalone task
+  /flow-task APP-105 "Add voucher selection bottom sheet"
+
+  # Resume an interrupted session
+  /flow-task resume APP-105
+  ```
+- **Inputs:** Ticket ID and brief description or attached specs.
+- **Outputs:** Lean single-file tracking state `plans/<TICKET>/flow-task.md`, verified code fix/feature, and ready-to-merge branch.
+
+---
+
+### 5.10. `ship-mr` — Diff Auditing & Review Description Author
 - **When to Use:** After implementation and verification, to audit git diff and generate conventional commit and MR body.
 - **Trigger / Command:**
   ```bash
@@ -480,5 +496,6 @@ android-agentic-sdlc/
     ├── test-author/              # Maestro YAML test flow generator & validator
     ├── test-runner/              # High-volume device test runner & monitor
     ├── flow-bug/                 # End-to-end bug lifecycle orchestrator
+    ├── flow-task/                # Standalone sprint task orchestrator (without CONTRACT.md)
     └── ship-mr/                  # Diff auditor & Merge Request description author
 ```
