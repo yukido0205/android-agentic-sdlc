@@ -52,7 +52,7 @@ Unless the user explicitly asks to *author/write a brand new test file from scra
 python3 skills/test-runner/scripts/suite-runner.py <target> [options]
 ```
 
-*(Note: `suite-runner.py` automatically initializes token usage tracking ngầm và xuất báo cáo khi hoàn thành).*
+*(Note: `suite-runner.py` automatically initializes background token usage tracking and exports a report upon completion).*
 
 `suite-runner.py` automatically resolves targets (e.g. `plans/<EPIC>/PLAN.md`, `plans/<TICKET>/regression-plan.md`, or `<TICKET>` resolves directly to `.maestro/<TICKET>/regression`).
 
@@ -186,33 +186,33 @@ python3 skills/test-runner/scripts/suite-runner.py <flow_directory_or_ticket> [o
 ```
 
 ### Streamlined Mode Presets (`-m / --mode`):
-Thay vì phải nhớ nhiều cờ rời rạc, sử dụng preset tương ứng với mục đích:
-- `-m repro`: Chạy repro flows (`--filter repro`, `--fail-fast 1`, live terminal).
-- `-m step`: Xác minh step tính năng mới (`--fail-fast 1`, live terminal).
-- `-m regression`: Chạy toàn bộ suite (`--resume`, live terminal).
-- `-m smoke`: Chạy smoke tests nhanh (`--filter @smoke`, `--fail-fast 1`, live terminal).
+Instead of remembering disparate flags, choose the preset matching your goal:
+- `-m repro`: Runs repro flows (`--filter repro`, `--fail-fast 1`, live terminal).
+- `-m step`: Verifies new feature step flows (`--fail-fast 1`, live terminal).
+- `-m regression`: Runs entire suite (`--resume`, live terminal).
+- `-m smoke`: Runs fast smoke suite (`--filter @smoke`, `--fail-fast 1`, live terminal).
 
-### Granular Override Options (Quyền ưu tiên cao nhất ghi đè Preset):
-- `--open-terminal`: Mở cửa sổ macOS Terminal live streaming (mặc định cho tất cả các mode).
-- `--headless`, `--no-terminal`: **Chỉ sử dụng khi User gõ rõ cờ này trong câu lệnh** (bị chặn bởi `pre-tool-guard.py` và `suite-runner.py` nếu Agent tự ý thêm).
-- `--filter <tag_or_keyword>`: Lọc case theo từ khóa hoặc tag (ghi đè filter của preset).
-- `--fail-fast [N]`: Dừng sớm sau N failures (mặc định 1).
-- `--resume`: Tiếp tục từ `checkpoint.json` (bỏ qua case đã PASS).
-- `--require-env <vars>`: Danh sách env token bắt buộc (e.g. `API_AUTH_TOKEN`).
-- `--mock-gps <lat,lon>`: Mock toạ độ GPS (e.g. `37.4220,-122.0841`).
-- `--device <id>`: ADB device ID khi có nhiều hơn 1 device.
-- `--no-reset`: Bỏ qua force-stop/relaunch giữa các test.
-- `--skip-preflight`: Bỏ qua kiểm tra preflight môi trường.
+### Granular Override Options (Highest Precedence Over Presets):
+- `--open-terminal`: Opens live macOS Terminal window for real-time monitoring (default across all modes).
+- `--headless`, `--no-terminal`: **Use only when explicitly requested in prompt** (blocked by `pre-tool-guard.py` and `suite-runner.py` if agent adds it unrequested).
+- `--filter <tag_or_keyword>`: Filters flows by keyword or tag (overrides preset filter).
+- `--fail-fast [N]`: Stops execution after N failures (default 1).
+- `--resume`: Resumes from `checkpoint.json` (skips passed flows).
+- `--require-env <vars>`: Comma-separated list of required env variables/tokens (e.g. `API_AUTH_TOKEN`).
+- `--mock-gps <lat,lon>`: Configures mock GPS location (e.g. `37.4220,-122.0841`).
+- `--device <id>`: ADB device ID when targeting a specific device.
+- `--no-reset`: Skips force-stop and relaunch between flows.
+- `--skip-preflight`: Skips preflight environment checks.
 
 ### What `suite-runner.py` handles automatically:
-1. **Configuration Transparency:** In banner `⚙️ SUITE CONFIGURATION` hiển thị rõ Mode, Terminal, Fail-Fast, và Filter đang áp dụng.
-2. **Auto Token Tracking:** Tự động start token tracking ngầm và xuất báo cáo khi hoàn thành suite.
+1. **Configuration Transparency:** Prints `⚙️ SUITE CONFIGURATION` banner displaying active Mode, Terminal, Fail-Fast, and Filter.
+2. **Auto Token Tracking:** Automatically runs background token usage tracking and writes report upon suite completion.
 3. **Preflight Health Checks:** Verifies device connection, app package installation, required tokens, and GPS before running. Fails immediately with actionable instructions if anything is missing (0 token waste).
 4. **Step Titles & Progress Streaming:** Automatically extracts semantic step names from folder paths (`03: Checkout Payment`, `Regression Suite`) and streams live progress.
 5. **Robust Pass/Fail Parsing:** Immune to runner logging crashes during exit. If assertions passed, it will not register a false FAIL.
 6. **Zero-Evidence-Loss Defect Logging:** On failure, captures screenshot via ADB binary stream + device fallback, dumps UI hierarchy XML for selector debugging, slices logcat, and generates `issues/NN-<slug>.md` immediately.
 7. **App State Isolation:** Automatically executes `adb shell am force-stop` and relaunches the app between flows to prevent popup leakage and cascading failures.
-8. **Summary & Checkpoint:** Records results in `checkpoint.json` và xuất báo cáo Markdown summary table.
+8. **Summary & Checkpoint:** Records results in `checkpoint.json` and outputs a clean Markdown summary table.
 
 ---
 

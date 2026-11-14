@@ -276,7 +276,7 @@ def check_run_command(args: dict, hook_data: dict) -> None:
                     "Running './gradlew ... install...' without device binding deploys simultaneously to ALL emulators, "
                     "corrupting parallel agent sessions.\n"
                     "Resolution:\n"
-                    "1. (Recommended) Tách bước Build & Install: Build with './gradlew assembleDebug', then pass '--install' to suite-runner.py "
+                    "1. (Recommended) Decouple Build & Install: Build with './gradlew assembleDebug', then pass '--install' to suite-runner.py "
                     "(which locks an idle emulator and installs safely via mutex lock).\n"
                     "2. Or specify target device explicitly: 'ANDROID_SERIAL=<device_id> ./gradlew ...'",
                 )
