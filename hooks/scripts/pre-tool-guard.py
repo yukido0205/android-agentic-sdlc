@@ -2,10 +2,11 @@
 """
 pre-tool-guard.py — Zero-token, <20ms PreToolUse mechanical guardrails for Mobile Agent Skills.
 
-Enforces 3 hard rules before a tool executes:
+Enforces 4 hard rules before a tool executes:
 1. [domain-purity-guard] Blocks `import android.*` / `import androidx.*` inside `/domain/` Kotlin files.
 2. [maestro-static-gate] Blocks invalid Maestro YAML filenames, coordinate taps (`point:`), and missing assertions.
 3. [command-safety-guard] Blocks raw `maestro test` CLI calls (enforces `suite-runner.py`) and prompts on destructive git commands.
+4. [multi-device-guard] Blocks un-isolated `./gradlew ... install...` when 2+ emulators/devices are active without ANDROID_SERIAL.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ import json
 import os
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
 
 # --- Regex patterns aligned with skills/test-author/scripts/validate-flow.py ---
@@ -31,6 +34,8 @@ USER_HEADLESS_INTENT_RE = re.compile(r"(--headless|--no-terminal|\bheadless\b|\b
 DESTRUCTIVE_CMD_RE = re.compile(
     r"\b(git\s+reset\s+--hard|git\s+push\s+(-f|--force)|git\s+clean\s+-[a-z]*f|adb\s+uninstall)\b"
 )
+GRADLE_INSTALL_RE = re.compile(r"(?:^|[;&|\s])(?:\./)?gradlew\b.*?\binstall[A-Za-z0-9_:]*", re.IGNORECASE)
+ANDROID_SERIAL_IN_CMD_RE = re.compile(r"\bANDROID_SERIAL=\S+")
 
 
 def reply(decision: str, reason: str = "") -> None:
@@ -193,6 +198,32 @@ def _user_requested_headless(hook_data: dict) -> bool | None:
     return bool(USER_HEADLESS_INTENT_RE.search(latest_user_text))
 
 
+def _count_active_devices() -> int:
+    """Returns number of online Android devices/emulators via adb devices. Fast (<15ms)."""
+    adb_bin = shutil.which("adb")
+    if not adb_bin:
+        sdk_root = (
+            os.environ.get("ANDROID_HOME")
+            or os.environ.get("ANDROID_SDK_ROOT")
+            or os.path.expanduser("~/Library/Android/sdk" if sys.platform == "darwin" else "~/Android/Sdk")
+        )
+        cand = os.path.join(sdk_root, "platform-tools", "adb")
+        if os.path.isfile(cand):
+            adb_bin = cand
+    if not adb_bin:
+        return 0
+
+    try:
+        res = subprocess.run([adb_bin, "devices"], capture_output=True, text=True, timeout=0.15)
+        if res.returncode != 0:
+            return 0
+        lines = [line.strip() for line in res.stdout.splitlines() if line.strip() and not line.startswith("List of devices")]
+        devices = [line.split()[0] for line in lines if "\tdevice" in line]
+        return len(devices)
+    except Exception:
+        return 0
+
+
 def check_run_command(args: dict, hook_data: dict) -> None:
     cmd = args.get("CommandLine") or args.get("command") or ""
     if not cmd:
@@ -232,6 +263,23 @@ def check_run_command(args: dict, hook_data: dict) -> None:
             f"[command-safety-guard] Destructive command detected (`{match.group(1)}`). "
             "Requires explicit user confirmation before executing.",
         )
+
+    # 3d. Block un-isolated `./gradlew ... install...` when 2+ emulators/devices are active without ANDROID_SERIAL
+    if GRADLE_INSTALL_RE.search(cmd):
+        has_serial = bool(ANDROID_SERIAL_IN_CMD_RE.search(cmd)) or bool(os.environ.get("ANDROID_SERIAL", "").strip())
+        if not has_serial:
+            active_devices = _count_active_devices()
+            if active_devices >= 2:
+                reply(
+                    "deny",
+                    f"[multi-device-guard] Blocked: Detected {active_devices} active emulators/devices without ANDROID_SERIAL.\n"
+                    "Running './gradlew ... install...' without device binding deploys simultaneously to ALL emulators, "
+                    "corrupting parallel agent sessions.\n"
+                    "Resolution:\n"
+                    "1. (Recommended) Tách bước Build & Install: Build with './gradlew assembleDebug', then pass '--install' to suite-runner.py "
+                    "(which locks an idle emulator and installs safely via mutex lock).\n"
+                    "2. Or specify target device explicitly: 'ANDROID_SERIAL=<device_id> ./gradlew ...'",
+                )
 
     reply("allow")
 

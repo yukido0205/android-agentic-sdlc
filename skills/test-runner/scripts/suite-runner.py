@@ -256,7 +256,9 @@ def run_preflight_checks(device_id, package_name, required_envs=None, mock_gps=N
         if not pm_path:
             errors.append(
                 f"Package '{package_name}' is NOT installed on {device_id}.\n"
-                f"   👉 Build & install first: ./gradlew :app:installDevDebug"
+                f"   👉 Decoupled solution: Build with './gradlew assembleDebug', then run suite-runner with '--install'\n"
+                f"      (e.g., `python3 skills/test-runner/scripts/suite-runner.py <target> -m step --install`),\n"
+                f"      which isolates the installation onto locked device {device_id} without colliding with other emulators."
             )
         else:
             print(f"  ✅ App package installed: {package_name}")
@@ -297,6 +299,83 @@ def run_preflight_checks(device_id, package_name, required_envs=None, mock_gps=N
         sys.exit(1)
 
     print("✅ All Preflight Checks Passed!\n")
+
+
+def find_debug_apk(explicit_path: Optional[str] = None, search_dir: Optional[Path] = None) -> Optional[Path]:
+    """Finds target APK for installation. Checks explicit path first, then searches build outputs."""
+    if explicit_path:
+        p = Path(explicit_path)
+        if p.exists() and p.is_file():
+            return p.resolve()
+        return None
+
+    root = search_dir or Path.cwd()
+    candidates = []
+
+    # Priority search locations for Android Gradle builds
+    search_globs = [
+        "app/build/outputs/apk/**/*.apk",
+        "*/build/outputs/apk/**/*.apk",
+        "build/outputs/apk/**/*.apk",
+    ]
+    for pattern in search_globs:
+        for p in root.glob(pattern):
+            if p.is_file():
+                candidates.append(p)
+
+    # Fallback search if standard build folders differ
+    if not candidates:
+        for p in root.rglob("*.apk"):
+            parts = set(p.parts)
+            if {".git", ".worktrees", "e2e-runs", "issues", "node_modules"}.intersection(parts):
+                continue
+            candidates.append(p)
+
+    # Filter out test and unaligned APKs
+    filtered = []
+    for c in candidates:
+        name_lower = c.name.lower()
+        if "test" in name_lower or "unaligned" in name_lower:
+            continue
+        filtered.append(c)
+
+    if not filtered:
+        filtered = [c for c in candidates if "test" not in c.name.lower()]
+
+    if not filtered:
+        return None
+
+    # Prefer APKs with 'debug' in name
+    debug_apks = [c for c in filtered if "debug" in c.name.lower()]
+    pool = debug_apks if debug_apks else filtered
+
+    # Return newest modified file
+    return max(pool, key=lambda f: f.stat().st_mtime).resolve()
+
+
+def install_apk_on_device(device_id: str, apk_arg: Optional[str] = None, explicit_apk: Optional[str] = None) -> str:
+    """Installs the target APK onto the locked device via ADB using isolated serial."""
+    target_path = explicit_apk or (apk_arg if apk_arg and apk_arg != "auto" else None)
+    apk_file = find_debug_apk(target_path)
+    if not apk_file or not apk_file.exists():
+        if target_path:
+            sys.exit(f"BLOCKED: Specified APK not found at '{target_path}'. Please verify the path or build first with './gradlew assembleDebug'.")
+        else:
+            sys.exit(
+                "BLOCKED: No debug APK found in build outputs. "
+                "Please build with './gradlew assembleDebug' first, or pass explicit path via '--install <path>'."
+            )
+
+    print(f"\n📦 Installing APK onto locked device [{device_id}]...")
+    print(f"   • APK: {apk_file}")
+    try:
+        out = run_adb("-s", device_id, "install", "-r", "-t", "-d", str(apk_file))
+        if "Success" not in out:
+            print(f"   ⚠️ ADB Output: {out.strip()}")
+        print(f"   ✅ Successfully installed APK onto [{device_id}]!\n")
+        return str(apk_file)
+    except Exception as e:
+        sys.exit(f"BLOCKED: Failed to install APK onto device '{device_id}': {e}")
 
 
 def format_semantic_name(raw_name):
@@ -851,6 +930,15 @@ def main():
     parser.add_argument("--_terminal-child", dest="terminal_child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-token-track", action="store_true", help="Skip automatic token usage tracking")
     parser.add_argument("--no-device-lock", action="store_true", help="Bypass automatic device locking and leasing")
+    parser.add_argument(
+        "--install",
+        nargs="?",
+        const="auto",
+        default=None,
+        metavar="APK_PATH",
+        help="Install APK onto the locked device before running tests (auto-detects debug APK in build outputs if path is omitted)",
+    )
+    parser.add_argument("--apk", dest="apk_path", help="Explicit APK file path to install (used with or as alternative to --install)")
 
     args = parser.parse_args()
 
@@ -923,6 +1011,8 @@ def main():
         term_label = "IN-PROCESS (CURRENT SHELL)"
     ff_label = f"STOP AFTER {args.fail_fast} FAILURE(S)" if args.fail_fast else "RUN ALL"
     filter_label = f"'{args.filter}'" if args.filter else "NONE (ALL FLOWS)"
+    install_target = args.apk_path or args.install
+    install_label = f"YES ({install_target})" if install_target else "NO (PRE-INSTALLED)"
     run_time_str = dt.datetime.now().strftime("%H:%M:%S")
 
     print("=" * 70)
@@ -932,6 +1022,7 @@ def main():
     print(f"   • Terminal:  {term_label}")
     print(f"   • Fail-Fast: {ff_label}")
     print(f"   • Filter:    {filter_label}")
+    print(f"   • Install:   {install_label}")
     print("=" * 70)
 
     # Smart target resolution (e.g. plans/<TICKET>/REGRESSION.md -> .maestro/<TICKET>/regression)
@@ -966,10 +1057,15 @@ def main():
     # Detect device & run preflight before starting token tracking or spawning external Terminal
     enable_lock = not args.no_device_lock
     device_id = detect_device(args.device, target=str(args.target), enable_lock=enable_lock)
+    os.environ["ANDROID_SERIAL"] = device_id
 
     lock_handed_off = False
     if enable_lock:
         atexit.register(lambda: release_device_lock(device_id) if not lock_handed_off else None)
+
+    # Isolated APK installation on locked device if requested
+    if args.install or args.apk_path:
+        install_apk_on_device(device_id, args.install, args.apk_path)
 
     if not args.skip_preflight:
         req_envs = [e.strip() for e in args.require_env.split(",")] if args.require_env else None
@@ -988,10 +1084,29 @@ def main():
     # If --open-terminal is requested, spawn or reuse an external Terminal window on macOS and exit
     if args.open_terminal:
         # Build child arguments using internal --_terminal-child to prevent recursive window spawns
-        remaining_args = [
-            a for a in sys.argv[1:]
-            if a not in ("--open-terminal", "--new-terminal", "--headless", "--no-terminal")
-        ]
+        # Omit --install and --apk since APK was already installed onto the locked device above
+        remaining_args = []
+        skip_next = False
+        raw_argv = sys.argv[1:]
+        for i, a in enumerate(raw_argv):
+            if skip_next:
+                skip_next = False
+                continue
+            if a in ("--open-terminal", "--new-terminal", "--headless", "--no-terminal"):
+                continue
+            if a in ("--apk",):
+                skip_next = True
+                continue
+            if a.startswith("--apk="):
+                continue
+            if a == "--install":
+                if i + 1 < len(raw_argv) and not raw_argv[i + 1].startswith("-"):
+                    skip_next = True
+                continue
+            if a.startswith("--install="):
+                continue
+            remaining_args.append(a)
+
         if "--_terminal-child" not in remaining_args:
             remaining_args.append("--_terminal-child")
         if "--skip-preflight" not in remaining_args:
@@ -1016,6 +1131,7 @@ def main():
         full_cmd = (
             f'{banner_cmd}'
             f'export MAESTRO_TOKEN_MARK_INHERITED=1 && '
+            f'export ANDROID_SERIAL="{device_id}" && '
             f'export PATH="{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}:$PATH" && '
             f'cd "{cwd}" && python3 "{script_path}" {quoted_args}'
         )

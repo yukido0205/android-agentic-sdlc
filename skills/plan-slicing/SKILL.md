@@ -27,6 +27,7 @@ This is the second half of one pipeline: `/plan-feature` (sources, questions, st
 3. **Zero Happy Path:** Do not write verbose narrative for standard 200 OK operations. Steps and acceptance focus on the **Anomaly Triangle**: edge cases, timeouts, missing data fallbacks, and stored data verification (`act → leave → reopen → observe`).
 4. **Ultra-Compact Output:** Max 1 screen scroll (< 300 words). Use markdown tables, checkboxes, and state transitions `[State] + [Event] -> [New State]`. No polite filler.
 5. **Language Consistency:** Always generate all artifacts and responses in the language of the repository and PRD (default: English). Never mix languages or switch to another language unless explicitly requested by the user.
+6. **Parallel Agent Isolation (Worktree + Mutex Device Lock):** For parallel agents executing on one Mac, initialize each ticket's workspace via `./scripts/init-worktree.sh <TICKET>` (0 tokens, <0.2s). Automatically symlinks `local.properties`, `google-services.json`, `keystore.properties`, `.agents/`, `.claude/`, and sets `org.gradle.workers.max=2`. Build with `./gradlew assembleDebug` and verify with `suite-runner.py --install`.
 
 ## When to use
 

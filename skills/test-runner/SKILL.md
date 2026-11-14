@@ -22,6 +22,9 @@ allowed-tools:
   - mcp__maestro__run
   - mcp__maestro__cheat_sheet
   - mcp__maestro__take_screenshot
+  - Bash(./gradlew assembleDebug *)
+  - Bash(./gradlew assemble*Debug *)
+  - Bash(./gradlew :app:assemble*Debug *)
   - Bash(./gradlew :app:installDevDebug *)
 ---
 
@@ -62,6 +65,17 @@ python3 skills/test-runner/scripts/suite-runner.py <target> [options]
 | `verify r-1.yaml` (or any single flow) | `python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/regression/r-1.yaml` |
 | `test PROJ-123` or `verify step-03` | `python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/<step_folder>/ -m step` |
 | `run smoke tests` | `python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/ -m smoke` |
+
+### 🔒 Multi-Agent Device Isolation & Decoupled Build/Install:
+When running multiple agents in parallel on 1 Mac with 2+ Emulators:
+1. **Never run raw `./gradlew install...` without `ANDROID_SERIAL`**: Gradle broadcasts APKs across all active emulators, colliding with concurrent agent runs. The mechanical guard `pre-tool-guard.py` will block this immediately (<20ms).
+2. **Decouple Build and Install**:
+   - **Step 1 (Build)**: Run `./gradlew assembleDebug` (pure artifact compile, zero emulator interaction).
+   - **Step 2 (Install & Verify)**: Run `suite-runner.py` with `--install`:
+     ```bash
+     python3 skills/test-runner/scripts/suite-runner.py <target> -m step --install
+     ```
+   `suite-runner.py` acquires an exclusive mutex lock on an available emulator first, sets `ANDROID_SERIAL=<locked_device_id>`, installs the APK exclusively to that emulator, and runs tests in complete isolation.
 
 ### ⛔ Strict Prohibitions (Zero Token Bleed & Live Terminal Enforcement):
 - **DO NOT** pass `--headless` or `--no-terminal` unless the user **explicitly typed** `--headless`, `--no-terminal`, or `headless` in their prompt. By default, `suite-runner.py` MUST open the external macOS Terminal window (`--open-terminal`) for live visual monitoring.
