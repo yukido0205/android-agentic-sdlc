@@ -19,10 +19,12 @@ import datetime as dt
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -1115,34 +1117,49 @@ def main():
             remaining_args.extend(["--device", device_id])
         script_path = os.path.abspath(sys.argv[0])
         cwd = os.getcwd()
-        quoted_args = " ".join([f'"{a}"' if " " in a else a for a in remaining_args])
+        quoted_args = " ".join(shlex.quote(a) for a in remaining_args)
+        child_cmd = f"python3 {shlex.quote(script_path)} {quoted_args}"
 
-        # Clear screen and show a timestamped divider banner in the monitor terminal
+        # Write the banner, exports, cd, and python3 command to a short-path launcher script
+        # in /tmp so Terminal's `do script` stays well under macOS's 1024-byte MAX_CANON PTY
+        # input buffer limit (which otherwise truncates long worktree paths/banners before Enter).
         run_time = dt.datetime.now().strftime("%H:%M:%S")
         divider = "═" * 70
-        clean_target = str(args.target).replace('"', '\\"')
         monitor_title = f"Test Monitor [{device_id}]"
-        banner_cmd = (
-            f"printf '\\033]0;{monitor_title}\\007' && "
-            f"clear && "
-            f"printf '\\033[1;36m{divider}\\n🔄 [{run_time}] E2E RUN ({device_id}): {clean_target}\\n{divider}\\033[0m\\n\\n' && "
-        )
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir="/tmp",
+            prefix="sr-monitor-",
+            suffix=".sh",
+            delete=False,
+            encoding="utf-8",
+        ) as tf:
+            launcher_path = tf.name
+            tf.write("#!/usr/bin/env bash\n")
+            tf.write(f"trap 'rm -f {shlex.quote(launcher_path)}' EXIT\n")
+            tf.write(f"printf '\\033]0;%s\\007' {shlex.quote(monitor_title)}\n")
+            tf.write("clear\n")
+            tf.write(
+                "printf '\\033[1;36m%s\\n🔄 [%s] E2E RUN (%s): %s\\n%s\\033[0m\\n\\n' "
+                f"{shlex.quote(divider)} {shlex.quote(run_time)} {shlex.quote(device_id)} "
+                f"{shlex.quote(str(args.target))} {shlex.quote(divider)}\n"
+            )
+            tf.write("export MAESTRO_TOKEN_MARK_INHERITED=1\n")
+            tf.write(f"export ANDROID_SERIAL={shlex.quote(device_id)}\n")
+            tf.write(f'export PATH={shlex.quote(f"{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}")}:"$PATH"\n')
+            tf.write(f"cd {shlex.quote(cwd)} || exit 1\n")
+            tf.write(f"{child_cmd}\n")
+        os.chmod(launcher_path, 0o700)
 
-        full_cmd = (
-            f'{banner_cmd}'
-            f'export MAESTRO_TOKEN_MARK_INHERITED=1 && '
-            f'export ANDROID_SERIAL="{device_id}" && '
-            f'export PATH="{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}:$PATH" && '
-            f'cd "{cwd}" && python3 "{script_path}" {quoted_args}'
-        )
+        launch_cmd = f"bash {shlex.quote(launcher_path)}"
 
         # Support iTerm2 or macOS Terminal.app based on active environment
         term_program = os.environ.get("TERM_PROGRAM", "").lower()
         launched = False
         force_new_term = "true" if args.new_terminal else "false"
+        escaped_cmd = launch_cmd.replace('\\', '\\\\').replace('"', '\\"')
 
         if "iterm" in term_program:
-            escaped_cmd = full_cmd.replace('\\', '\\\\').replace('"', '\\"')
             iterm_script = f'''
             tell application "iTerm"
                 activate
@@ -1186,7 +1203,6 @@ def main():
                 launched = False
 
         if not launched:
-            escaped_cmd = full_cmd.replace('\\', '\\\\').replace('"', '\\"')
             terminal_script = f'''
             tell application "Terminal"
                 activate
@@ -1194,7 +1210,7 @@ def main():
                 if not {force_new_term} then
                     repeat with w in windows
                         try
-                            if name of w contains "{monitor_title}" then
+                            if name of w contains "{monitor_title}" and not (busy of selected tab of w) then
                                 set targetTab to selected tab of w
                                 set index of w to 1
                                 exit repeat
@@ -1216,11 +1232,16 @@ def main():
             except Exception as e:
                 print(f"Warning: Could not launch Terminal window ({e}). Running in current process instead...")
 
-        if launched:
+        if not launched:
+            try:
+                os.unlink(launcher_path)
+            except OSError:
+                pass
+        else:
             lock_handed_off = True
             reused_str = "reused existing" if not args.new_terminal else "new window"
             print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str}) [{monitor_title}]!")
-            print(f"👉 Command executing: {full_cmd}")
+            print(f"👉 Command executing: {child_cmd}")
             print("⏳ Tests are now running live in the external Terminal window.")
             print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.")
             return 0
