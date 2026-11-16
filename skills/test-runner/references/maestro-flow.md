@@ -39,6 +39,20 @@ Never use cryptic single-letter abbreviations like `s3`, `f3`, `s2s4`, `f5`. Fol
 
 `<RUN>` = `<TICKET>` when there is a ticket, else `yyMMdd-<kebab-slug>` (SKILL.md, "Run folder").
 
+## Code-First ID Extraction (Static First, Dynamic Fallback)
+
+Reading source code to extract IDs is **10× faster** than querying an emulator and costs **~0 device tokens**:
+
+1. **Priority #1 — Static Source Code Scan (~90% of cases):**
+   Run `python3 skills/test-author/scripts/extract-selectors.py [path] -k "<keyword>"` (or grep `res/layout/*.xml` for `android:id="@+id/..."` and `*.kt` for `Modifier.testTag(...)`).
+   - **Found IDs in Code?** → Write the `.yaml` flow files immediately using the extracted bare IDs (`id: "<resource-id>"`) and resolved `strings.xml` text.
+2. **Priority #2 — Dynamic Device Fallback (Only when static scan misses or SDUI):**
+   Only when selectors are not in source code (Server-Driven UI, WebView, system dialogs) or a static selector fails at runtime:
+   - Reach the screen and run `python3 skills/test-runner/scripts/device.py nodes [substr]` to dump runtime IDs once.
+   - Write/update the `.yaml` flow file with the discovered ID.
+3. **Execute in One Continuous CLI Pass (`suite-runner.py`):**
+   Validate with `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/` and hand off to `python3 skills/test-runner/scripts/suite-runner.py .maestro/<RUN>/ -m step`.
+
 ## One flow = one acceptance line
 
 ```yaml
@@ -50,7 +64,7 @@ name: "AC-n <the line as a sentence>"
     clearState: false          # keep the session the emulator is already signed in with
 - runFlow: ../_nav/<screen>.yaml
 - tapOn:
-    id: "<resource-id>"        # id first; text only when the node has no id
+    id: "<resource-id>"        # id first (bare XML id or Compose testTag); text only when the node has no id
 - assertVisible:
     id: "<resource-id>"
 - assertNotVisible:
@@ -59,9 +73,7 @@ name: "AC-n <the line as a sentence>"
 ```
 
 Rules:
-- **Select by id.** XML views: the bare `android:id` name. Compose: the test tag, verbatim — see
-  `.claude/references/compose-test-tags.md`. On a Compose row the id sits on the tappable node and
-  the label on its child: tap by id, assert the label by text.
+- **Select by id.** XML views: the bare `android:id` name (e.g. `btn_submit` — avoids hardcoded flavor package prefixes). Compose: the `Modifier.testTag` string, verbatim (requires `testTagsAsResourceId = true`). On a Compose row the id sits on the tappable node and the label on its child: tap by id, assert the label by text.
 - **Every flow cites `PRD §n`** in its header. When the PRD moves, grep `.maestro/` for that `§`.
 - **Assert what the line claims, nothing else.** Extra assertions are extra failures to triage.
 - **Never type credentials.** Flows assume an already signed-in emulator. Signed out → stop with
@@ -69,13 +81,10 @@ Rules:
 - **No `takeScreenshot` in flows**, and no `take_screenshot` calls while passing — an image only for a failure.
 - A screen reachable only through a long tap path: write the path once in `_nav/`, never inline.
 
-## Run (Maestro MCP)
+## Execution & Debugging
 
-Every call takes the `device_id` from `list_devices`. `run` takes exactly one of `yaml`, `files`, `dir`.
-
-- Explore: `run` with `yaml` (inline) — nothing written to disk until it works.
-- One flow while fixing: `run` with `files: [".maestro/<RUN>/ac-<n>.yaml"]`.
-- The whole step: `run` with `dir: ".maestro/<RUN>"`. `_nav/` lives outside it, so it is never
-  run as a test on its own.
-- Syntax is validated by `run` itself; there is no separate check.
-- Out of an MCP session (CI, a human): `maestro test .maestro/<RUN>/` runs the same files.
+- **Standard Execution (Always Preferred):** Run authored YAML files in one continuous pass via `suite-runner.py`:
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py .maestro/<RUN>/ -m step
+  ```
+- **Fallback Interactive Debugging (Maestro MCP):** Only when fixing a stubborn single flow where static selectors and `suite-runner.py` failure logs aren't enough, you may test inline steps with MCP `run` (`device_id` from `list_devices`), then persist to `.maestro/<RUN>/ac-<n>.yaml` and re-verify via `suite-runner.py`.
