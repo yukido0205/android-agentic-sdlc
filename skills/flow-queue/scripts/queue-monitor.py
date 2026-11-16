@@ -150,12 +150,12 @@ def render_dashboard(repo_root: Path) -> str:
 def open_external_terminal(script_path: Path, repo_root: Path, interval: float) -> bool:
     """Launch or reuse an external macOS Terminal / iTerm2 live monitor window."""
     title = "SDLC Queue Monitor"
-    cmd = f"printf '\\033]0;{title}\\007' && cd \"{repo_root}\" && python3 \"{script_path}\" --_terminal-child --interval {interval}"
+    cmd = f'cd "{repo_root}" && python3 "{script_path}" --_terminal-child --interval {interval}'
     esc = cmd.replace("\\", "\\\\").replace('"', '\\"')
     if "iterm" in os.environ.get("TERM_PROGRAM", "").lower():
         osa = f'tell application "iTerm"\nactivate\nrepeat with w in windows\nrepeat with s in sessions of current tab of w\nif name of s contains "{title}" then\ntell s to write text "{esc}"\nreturn\nend if\nend repeat\nend repeat\ntell current session of (create window with default profile) to write text "{esc}"\nend tell'
     else:
-        osa = f'tell application "Terminal"\nactivate\nrepeat with w in windows\nif name of w contains "{title}" then\ndo script "{esc}" in selected tab of w\nset index of w to 1\nreturn\nend if\nend repeat\ndo script "{esc}"\nend tell'
+        osa = f'tell application "Terminal"\nactivate\nrepeat with w in windows\nif name of w contains "{title}" then\nif not (busy of selected tab of w) then\ndo script "{esc}" in selected tab of w\nend if\nset index of w to 1\nreturn\nend if\nend repeat\ndo script "{esc}"\nend tell'
     return subprocess.run(["osascript", "-e", osa], capture_output=True).returncode == 0
 
 
@@ -198,6 +198,7 @@ def main() -> None:
         return
 
     try:
+        sys.stdout.write("\033]0;SDLC Queue Monitor\007")
         while True:
             sys.stdout.write("\033[2J\033[H" + render_dashboard(repo_root) + "\n")
             sys.stdout.flush()
