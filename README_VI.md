@@ -78,7 +78,7 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 | **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test quy mô lớn, stream live ANSI ra terminal, chụp màn hình lỗi và 0 tốn token khi pass. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Nhạc trưởng) | Điều phối toàn diện vòng đời bug (Hiểu $\to$ Sửa $\to$ Chứng minh $\to$ Ship), người chỉ duyệt 3 cổng. |
 | **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Nhạc trưởng) | Điều phối trọn gói task tính năng/cải tiến lẻ giữa sprint không cần CONTRACT.md, chỉ duyệt 3 cổng. |
-| **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Đa Tác Vụ) | Điều phối nhiều task trên 1 chat với worktree cô lập, bảng live 0-token và gom duyệt Gate tập trung. |
+| **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Đa Tác Vụ) | Điều phối nhiều task trên 1 chat với worktree cô lập và gom duyệt Gate tập trung. |
 | **`ship-mr`** | `skills/ship-mr` | `/ship-mr` | Ship (Xuất xưởng) | Kiểm toán git diff, đối chiếu mệnh đề nhân quả và bằng chứng test; tạo commit & nội dung MR. |
 
 ---
@@ -416,7 +416,7 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
 ---
 
-### 5.10. `flow-queue` — Điều Phối Đa Task Trên 1 Chat & Live Queue Monitor
+### 5.10. `flow-queue` — Điều Phối Đa Task Trên 1 Chat
 - **Khi nào sử dụng:** Khi muốn thả cả danh sách bug và task tính năng lẻ vào **1 cửa sổ chat duy nhất** để chạy song song trên các worktree cô lập và gom duyệt Gate tập trung.
 - **Lệnh kích hoạt / Cú pháp:**
   ```bash
@@ -424,7 +424,7 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
   /flow-queue status
   ```
 - **Đầu vào:** Danh sách mã ticket và mô tả ngắn (tự động điều phối vào `flow-bug` hoặc `flow-task`).
-- **Đầu ra:** Các sandbox `.worktrees/<TICKET>`, cửa sổ Terminal `SDLC Queue Monitor` cập nhật live (`0` token LLM) và bảng gom duyệt Gate 1/2/3.
+- **Đầu ra:** Các sandbox `.worktrees/<TICKET>` và bảng gom duyệt Gate 1/2/3.
 
 ---
 
@@ -511,6 +511,6 @@ android-agentic-sdlc/
     ├── test-runner/              # Bộ chạy test trên thiết bị & stream terminal
     ├── flow-bug/                 # Nhạc trưởng điều phối sửa bug khép kín
     ├── flow-task/                # Nhạc trưởng điều phối task tính năng lẻ (không cần CONTRACT.md)
-    ├── flow-queue/               # Nhạc trưởng điều phối đa task trên 1 chat & live monitor 0-token
+    ├── flow-queue/               # Nhạc trưởng điều phối đa task trên 1 chat với worktree cô lập
     └── ship-mr/                  # Kiểm toán diff & viết mô tả Merge Request
 ```

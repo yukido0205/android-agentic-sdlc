@@ -1,21 +1,21 @@
 ---
 name: flow-queue
-description: Single-chat multi-task orchestrator for running multiple Android bugs and standalone tasks concurrently in isolated worktrees with a 0-token real-time Terminal monitor (`SDLC Queue Monitor`) and batched human gate approvals. Dispatches sub-agents per ticket running `flow-bug` or `flow-task` without diluting their rules.
+description: Single-chat multi-task orchestrator for running multiple Android bugs and standalone tasks concurrently in isolated worktrees with batched human gate approvals. Dispatches sub-agents per ticket running `flow-bug` or `flow-task` without diluting their rules.
 when_to_use: Invoke explicitly with /flow-queue <ticket list> (e.g. "/flow-queue PAY-101 (bug: ...), APP-105 (task: ...)"), "/flow-queue status", or "/flow-queue resume". Do NOT auto-trigger.
 disable-model-invocation: true
 ---
 
-# Flow Queue — Multi-Task Orchestrator & Live Monitor
+# Flow Queue — Multi-Task Orchestrator
 
 Orchestrate multiple tickets from **1 single chat prompt** while preserving 100% of `flow-bug` and `flow-task` discipline.
 
-The coordinator owns **worktree provisioning**, **live monitor launch**, **sub-agent dispatch**, and **batched Gate 1 / 2 / 3 approvals**. Each sub-agent owns execution inside its isolated `.worktrees/<TICKET>/` sandbox.
+The coordinator owns **worktree provisioning**, **sub-agent dispatch**, and **batched Gate 1 / 2 / 3 approvals**. Each sub-agent owns execution inside its isolated `.worktrees/<TICKET>/` sandbox.
 
 ---
 
 ## Subcommands
 
-- `/flow-queue <ticket list>`: Parse tasks, provision worktrees, open live monitor, and dispatch parallel Phase 1 grounding.
+- `/flow-queue <ticket list>`: Parse tasks, provision worktrees, and dispatch parallel Phase 1 grounding.
 - `/flow-queue status`: Run `queue-monitor.py --once` and summarize current state.
 - `/flow-queue resume`: Inspect `.worktrees/*` and `plans/*/flow-*.md` via `--once`, then resume pending sub-agents from their recorded Gate/Phase.
 
@@ -34,13 +34,13 @@ Extract each ticket ID and brief from the user's prompt. Classify into:
 
 ---
 
-## Step 2 — Provision Worktrees & Launch 0-Token Monitor
+## Step 2 — Provision Worktrees
 
 Run **one single shell command** from repo root:
 ```bash
-python3 skills/flow-queue/scripts/queue-monitor.py --init <TICKET_1> <TICKET_2> ... --open-terminal
+python3 skills/flow-queue/scripts/queue-monitor.py --init <TICKET_1> <TICKET_2> ...
 ```
-This creates `.worktrees/<TICKET>` (`<0.2s` each), symlinks Android SDK/keystores/skills, sets `org.gradle.workers.max=2` to protect macOS RAM, and opens the `SDLC Queue Monitor` Terminal window (0 LLM tokens).
+This creates `.worktrees/<TICKET>` (`<0.2s` each), symlinks Android SDK/keystores/skills, and sets `org.gradle.workers.max=2` to protect macOS RAM.
 
 ---
 

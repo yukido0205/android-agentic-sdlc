@@ -78,7 +78,7 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 | **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` or CLI | Test (Execution) | High-volume test runner with live ANSI terminal streaming, failure snapshots, and 0-token-bleed presets. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Orchestration) | Complete bug lifecycle orchestrator (Understand $\to$ Fix $\to$ Prove $\to$ Ship) with 3 human review gates. |
 | **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Orchestration) | Standalone sprint task orchestrator (Understand $\to$ Build $\to$ Prove $\to$ Ship) without an upfront contract. |
-| **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Multi-Task) | Single-chat multi-agent orchestrator with isolated worktrees, 0-token live monitor, and batched Gate approvals. |
+| **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Multi-Task) | Single-chat multi-agent orchestrator with isolated worktrees and batched Gate approvals. |
 | **`ship-mr`** | `skills/ship-mr` | `/ship-mr` | Ship (Delivery) | Audits git diffs against test evidence & verified claims; drafts conventional commits and MR bodies. |
 
 ---
@@ -418,7 +418,7 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 11 
 
 ---
 
-### 5.10. `flow-queue` — Multi-Task Orchestrator & Live Queue Monitor
+### 5.10. `flow-queue` — Multi-Task Orchestrator
 - **When to Use:** When pasting a batch of bugs and standalone tasks into **1 single chat prompt** to run concurrently in isolated worktrees with batched Gate approvals.
 - **Trigger / Commands:**
   ```bash
@@ -426,7 +426,7 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 11 
   /flow-queue status
   ```
 - **Inputs:** List of ticket IDs and short briefs (auto-routed to `flow-bug` or `flow-task`).
-- **Outputs:** Provisioned `.worktrees/<TICKET>` sandboxes, live `SDLC Queue Monitor` Terminal dashboard (`0` LLM tokens), and batched Gate 1/2/3 approvals.
+- **Outputs:** Provisioned `.worktrees/<TICKET>` sandboxes and batched Gate 1/2/3 approvals.
 
 ---
 
@@ -513,6 +513,6 @@ android-agentic-sdlc/
     ├── test-runner/              # High-volume device test runner & monitor
     ├── flow-bug/                 # End-to-end bug lifecycle orchestrator
     ├── flow-task/                # Standalone sprint task orchestrator (without CONTRACT.md)
-    ├── flow-queue/               # Single-chat multi-task orchestrator & 0-token live monitor
+    ├── flow-queue/               # Single-chat multi-task orchestrator with isolated worktrees
     └── ship-mr/                  # Diff auditor & Merge Request description author
 ```

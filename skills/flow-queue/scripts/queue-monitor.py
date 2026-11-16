@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-token real-time monitor and worktree initializer for /flow-queue."""
+"""Worktree initializer and one-shot status helper for /flow-queue."""
 
 from __future__ import annotations
 
@@ -147,18 +147,6 @@ def render_dashboard(repo_root: Path) -> str:
     return "\n".join(out)
 
 
-def open_external_terminal(script_path: Path, repo_root: Path, interval: float) -> bool:
-    """Launch or reuse an external macOS Terminal / iTerm2 live monitor window."""
-    title = "SDLC Queue Monitor"
-    cmd = f'cd "{repo_root}" && python3 "{script_path}" --_terminal-child --interval {interval}'
-    esc = cmd.replace("\\", "\\\\").replace('"', '\\"')
-    if "iterm" in os.environ.get("TERM_PROGRAM", "").lower():
-        osa = f'tell application "iTerm"\nactivate\nrepeat with w in windows\nrepeat with s in sessions of current tab of w\nif name of s contains "{title}" then\ntell s to write text "{esc}"\nreturn\nend if\nend repeat\nend repeat\ntell current session of (create window with default profile) to write text "{esc}"\nend tell'
-    else:
-        osa = f'tell application "Terminal"\nactivate\nrepeat with w in windows\nif name of w contains "{title}" then\nif not (busy of selected tab of w) then\ndo script "{esc}" in selected tab of w\nend if\nset index of w to 1\nreturn\nend if\nend repeat\ndo script "{esc}"\nend tell'
-    return subprocess.run(["osascript", "-e", osa], capture_output=True).returncode == 0
-
-
 def _find_init_script(repo_root: Path) -> Path | None:
     cands = [
         repo_root / "scripts" / "init_worktree.py",
@@ -170,12 +158,9 @@ def _find_init_script(repo_root: Path) -> Path | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="0-token SDLC Queue Live Monitor")
+    parser = argparse.ArgumentParser(description="Worktree initializer and one-shot status helper for /flow-queue")
     parser.add_argument("--init", nargs="+", metavar="TICKET", help="Initialize isolated worktrees for tickets")
-    parser.add_argument("--open-terminal", action="store_true", help="Launch live watch window in macOS Terminal/iTerm")
     parser.add_argument("--once", action="store_true", help="Print status snapshot once and exit")
-    parser.add_argument("--interval", type=float, default=1.0, help="Refresh interval in seconds")
-    parser.add_argument("--_terminal-child", dest="terminal_child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     repo_root = find_repo_root()
@@ -187,24 +172,7 @@ def main() -> None:
             if subprocess.run([sys.executable, str(init_py), t], cwd=repo_root).returncode != 0:
                 sys.exit(f"❌ Failed initializing worktree for {t}")
 
-    if args.open_terminal and not args.terminal_child:
-        if open_external_terminal(Path(__file__).resolve(), repo_root, args.interval):
-            print("🖥️  Opened live 'SDLC Queue Monitor' terminal window (0 LLM tokens).")
-            return
-        print("⚠️ Could not open external Terminal; printing snapshot instead.\n")
-
-    if args.once or not args.terminal_child:
-        print(render_dashboard(repo_root))
-        return
-
-    try:
-        sys.stdout.write("\033]0;SDLC Queue Monitor\007")
-        while True:
-            sys.stdout.write("\033[2J\033[H" + render_dashboard(repo_root) + "\n")
-            sys.stdout.flush()
-            time.sleep(args.interval)
-    except KeyboardInterrupt:
-        print("\n👋 SDLC Queue Monitor stopped.")
+    print(render_dashboard(repo_root))
 
 
 if __name__ == "__main__":
