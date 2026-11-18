@@ -19,10 +19,12 @@ import datetime as dt
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -1115,26 +1117,41 @@ def main():
             remaining_args.extend(["--device", device_id])
         script_path = os.path.abspath(sys.argv[0])
         cwd = os.getcwd()
-        quoted_args = " ".join([f'"{a}"' if " " in a else a for a in remaining_args])
 
         # Clear screen and show a timestamped divider banner in the monitor terminal
         run_time = dt.datetime.now().strftime("%H:%M:%S")
         divider = "═" * 70
-        clean_target = str(args.target).replace('"', '\\"')
         monitor_title = f"Test Monitor [{device_id}]"
-        banner_cmd = (
-            f"printf '\\033]0;{monitor_title}\\007' && "
-            f"clear && "
-            f"printf '\\033[1;36m{divider}\\n🔄 [{run_time}] E2E RUN ({device_id}): {clean_target}\\n{divider}\\033[0m\\n\\n' && "
-        )
+        safe_dev = re.sub(r"[^A-Za-z0-9._-]", "_", device_id)
 
-        full_cmd = (
-            f'{banner_cmd}'
-            f'export MAESTRO_TOKEN_MARK_INHERITED=1 && '
-            f'export ANDROID_SERIAL="{device_id}" && '
-            f'export PATH="{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}:$PATH" && '
-            f'cd "{cwd}" && python3 "{script_path}" {quoted_args}'
-        )
+        # Write full launch commands to a temp script so osascript only sends a short
+        # command and never hits macOS's 1024-byte PTY canonical input buffer limit (MAX_CANON).
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix=f"test-monitor-{safe_dev}-",
+            suffix=".sh",
+            delete=False,
+            encoding="utf-8",
+        ) as tf:
+            launcher_path = tf.name
+            launcher_quoted = shlex.quote(launcher_path)
+            path_prefix = shlex.quote(f"{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}")
+            banner_header = f"{divider}\n🔄 [{run_time}] E2E RUN ({device_id}): {args.target}\n{divider}"
+            tf.write(
+                "#!/usr/bin/env bash\n"
+                f"rm -f {launcher_quoted}\n"
+                f"printf '\\033]0;%s\\007' {shlex.quote(monitor_title)}\n"
+                "clear\n"
+                f"printf '\\033[1;36m%s\\033[0m\\n\\n' {shlex.quote(banner_header)}\n"
+                "export MAESTRO_TOKEN_MARK_INHERITED=1\n"
+                f"export ANDROID_SERIAL={shlex.quote(device_id)}\n"
+                f'export PATH={path_prefix}:"$PATH"\n'
+                f"cd {shlex.quote(cwd)} || exit 1\n"
+                f"exec python3 {shlex.quote(script_path)} {shlex.join(remaining_args)}\n"
+            )
+
+        launch_cmd = f"bash {shlex.quote(launcher_path)}"
+        escaped_cmd = launch_cmd.replace("\\", "\\\\").replace('"', '\\"')
 
         # Support iTerm2 or macOS Terminal.app based on active environment
         term_program = os.environ.get("TERM_PROGRAM", "").lower()
@@ -1142,7 +1159,6 @@ def main():
         force_new_term = "true" if args.new_terminal else "false"
 
         if "iterm" in term_program:
-            escaped_cmd = full_cmd.replace('\\', '\\\\').replace('"', '\\"')
             iterm_script = f'''
             tell application "iTerm"
                 activate
@@ -1186,7 +1202,6 @@ def main():
                 launched = False
 
         if not launched:
-            escaped_cmd = full_cmd.replace('\\', '\\\\').replace('"', '\\"')
             terminal_script = f'''
             tell application "Terminal"
                 activate
@@ -1220,10 +1235,15 @@ def main():
             lock_handed_off = True
             reused_str = "reused existing" if not args.new_terminal else "new window"
             print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str}) [{monitor_title}]!")
-            print(f"👉 Command executing: {full_cmd}")
+            print(f"👉 Command executing: python3 {shlex.quote(script_path)} {shlex.join(remaining_args)}")
             print("⏳ Tests are now running live in the external Terminal window.")
             print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.")
             return 0
+
+        try:
+            os.unlink(launcher_path)
+        except OSError:
+            pass
 
     # For in-process or terminal-child runs, ensure lock is refreshed with current PID and cleanup registered
     if enable_lock:
