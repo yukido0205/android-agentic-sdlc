@@ -11,9 +11,10 @@ Eliminates over-management by consolidating requirements, open questions, storie
 
 ## Cognitive Load Reduction Rules (Anti-Overmanagement & Anti-Fatigue)
 
-1. **Lean Architecture (Single Spec File):**
+1. **Lean Architecture (Single Spec File + Optional Machine Cache):**
    - Output goes into **`plans/<EPIC or TICKET>/PLAN.md`** (from `assets/PLAN.template.md`).
-   - Do NOT create separate `SOURCES.md`, `OPEN-QUESTIONS.md`, `FRAMES.md`, `use-cases.md`, `stories.md`, or `risks.md`. All sections live together in `PLAN.md`.
+   - **Optional `FIGMA-CACHE.md`:** When Figma has many screens/nodes, dump raw node trees, design tokens, and copy into `plans/<EPIC>/FIGMA-CACHE.md` (machine-read cache) and keep only a 1-row-per-screen `Screen Map` (`Screen | Node ID | Owning Slice`) in `PLAN.md §1`.
+   - Do NOT create separate `SOURCES.md`, `OPEN-QUESTIONS.md`, `FRAMES.md`, `use-cases.md`, `stories.md`, or `risks.md`. All epic-level logic stays in `PLAN.md` so cross-slice deltas only read `PLAN.md` + `CONTRACT.md`.
 2. **Executive Summary First:** Every response MUST begin with a 3-line check:
    - `[Tier]`: Tier 1 (PRD only) · Tier 2 (PRD + Figma, no BE) · Tier 3 (Full Triad).
    - `[Red Flags]`: Breaking contradictions? (Yes/No + 1 sentence).
@@ -22,12 +23,15 @@ Eliminates over-management by consolidating requirements, open questions, storie
    - Contradictions between PRD, Figma, and API docs.
    - Information Gaps (missing fields, data type mismatches).
    - Edge cases, network failures, timeouts, race conditions.
-4. **Self-Contained Questions in `PLAN.md §2`:** Never strip context. All rich context (flow/screen context, exact source citations, technical release risk, client defensive mock strategy, and Slack chat snippet) lives directly in `PLAN.md §2`.
+4. **Dense Questions in `PLAN.md §2` + Chat-Only Slack Snippets:**
+   - Record every discrepancy in the compact `Open Questions` table (`Conflict / Gap`, exact citations, `Technical Risk`, `Assumption in Force`, `Owner`, `Impact`).
+   - **Never store copy-paste Slack snippets in `PLAN.md`** — emit persona-aware Slack snippets directly in chat when running `/plan-feature` (or on demand) so `PLAN.md` stays scannable on large epics.
+   - Move answered questions into the `<details><summary>Resolved Questions (N)</summary>` block at the bottom of `§2`.
 5. **Persona-Aware Lazy Clarifications (No Developer Jargon):**
    - **When asking PM / Design:** Strictly communicate in **User Experience & Visual language**. Button labels, what user sees. **NEVER** use developer jargon (e.g. endpoint URLs, parameter names, "plumb it", "client-side merge").
    - **When asking Backend:** Communicate in **Data Flow & Responsibilities** (what fields UI needs, who calculates/stores, fallback behavior).
-   - **Slack-Optimized Layout:** Visual examples, clear `👉 [A]` vs `👉 [B]` choices, and a polite soft-deadline assumption disclaimer so anyone can reply in 3 seconds.
-6. **Ultra-Compact Output:** Max 1 screen scroll (< 300 words). Use tables and state transition formulas: `[Current State] + [Event] -> [Target State]`. No polite filler words.
+   - **Slack-Optimized Layout (in chat):** Visual examples, clear `👉 [A]` vs `👉 [B]` choices, and a polite soft-deadline assumption disclaimer so anyone can reply in 3 seconds.
+6. **Ultra-Compact Output:** Max 1 screen scroll (< 300 words). Use dense markdown tables, `<details>` folding for resolved/detailed history, and state transition formulas: `[Current State] + [Event] -> [Target State]`. No polite filler words.
 7. **Language Consistency:** Always generate all artifacts in the language of the repository and PRD (default: English). Never mix languages.
 
 ## When to use
@@ -56,19 +60,15 @@ Look for prior runs in `plans/<EPIC>/PLAN.md` or existing specs. When an artifac
 ## Step 1 — Reconcile sources & Log Questions (`PLAN.md` §§ 1–2)
 
 Cross-check PRD, Figma, API docs and running code **against each other**; trust none alone.
-- Write pinned specifications into `PLAN.md §1 Triad Sources & Scope`.
-- For every discrepancy, gap, or ambiguity, write a **Self-Contained Question** in `PLAN.md §2`:
-  - Flow & Screen context.
-  - Citations (PRD §n, Figma node_id, API endpoint/field).
-  - Technical Release Risk.
-  - Client Defensive Strategy (fallback/mock).
-  - Copy-pasteable Slack snippet with `👉 [A]` vs `👉 [B]` and deadline disclaimer.
+- Write pinned specifications and the compact `Screen Map` (`Screen | Node ID | Owning Slice`) into `PLAN.md §1 Triad Sources & Scope`. If Figma has extensive node specs/tokens, cache raw design dumps in `plans/<EPIC>/FIGMA-CACHE.md` instead of pasting them into `PLAN.md`.
+- For every discrepancy, gap, or ambiguity:
+  - Add 1 dense row to the `Open Questions` table in `PLAN.md §2` (`Conflict / Gap` with exact PRD §n / Figma node_id / API citations, `Technical Risk`, `Assumption in Force`, `Owner`, `Impact`).
+  - **In chat only** (never saved into `PLAN.md`), output copy-pasteable persona-aware Slack snippets with `👉 [A]` vs `👉 [B]` and deadline disclaimer.
 
 ## Step 2 & 3 — Stories, Acceptance & Risks (`PLAN.md` §3)
 
-Consolidate user stories and edge cases into `PLAN.md §3 User Stories & Acceptance Criteria`:
-- `Story <NN>`: `As a <actor>, I want <capability>, so that <value>`.
-- **Zero Happy Path:** Happy path is a 1-line formula: `[State] + [Event] -> [State]`.
+Consolidate user stories and edge cases into the dense `PLAN.md §3` table (1 row per story):
+- `Story <NN>`: `**<Actor>:** <capability> — [State] + [Event] -> [State]` (Zero Happy Path prose).
 - Acceptance criteria focus 100% on the **Anomaly Triangle**:
   - `AC-1`: Missing fields / unknown backend data handling (map to safe state).
   - `AC-2`: Failures & edge cases (timeouts, 4xx, 5xx, retry).
@@ -82,19 +82,19 @@ Consolidate user stories and edge cases into `PLAN.md §3 User Stories & Accepta
 
 ## Step 4 — Build (single-story features only)
 
-Cut the story into 3–5 steps (Scope goal + Acceptance Criteria) directly under `PLAN.md §4`.
+Cut the story into 3–5 steps as a compact table (`Step | Scope | Key Acceptance | Status | MR / Commit`) + collapsible `<details>` Technical Decisions block directly under `PLAN.md §4`.
 **One step = one MR = one fresh session (`/clear`)**, 150–250 changed lines (hard limit 300), ~3–5 files (resources excluded).
-**Step Order:** no-UI logic → walking skeleton (unreachable) → happy path → errors → polish. Every merged step falls back to the safe state.
+**Step Order:** no-UI logic → walking skeleton (unreachable) → happy path → errors → polish. Every merged step falls back to the safe state. When a step is `DONE`, compact its tasks inside `<details>` into 1–3 lines of permanent **Technical Decisions**.
 > 🛑 **Session Boundary:** Do NOT implement all 3–5 steps in the planning session. Persist the step ladder in `PLAN.md §4`, then instruct the developer to open a **fresh session (`/clear`)** per step so each step scans and plans its own file-level details without context bloat.
 
 ---
 
 ## Iron Rules
 
-1. **Single Source of Truth:** All specs, questions, stories, and execution steps live in `PLAN.md`. Never generate 10+ md files.
+1. **Single Source of Truth:** All epic-level specs, questions, stories, and step tables live in `PLAN.md` (with optional `FIGMA-CACHE.md` for raw Figma dumps). Never generate 10+ md files.
 2. **No code before questions carry an assumption in force.** Every assumption is a visible row in `PLAN.md §2`.
 3. **Every edge case ends up somewhere:** an `AC`, a risk mitigation, or `PLAN.md §5`.
-4. **Zero Happy Path & Self-Contained Questions:** Never write verbose prose for standard flows. All questions in `PLAN.md §2` contain full context and Slack snippets.
+4. **Dense Tables & Chat-Only Slack Snippets:** Never write verbose happy-path prose or store Slack copy-paste messages in `PLAN.md`. Fold resolved questions and step technical decisions inside `<details>`.
 5. **Never Block on Missing Figma or BE:** Unblock immediately with proposed contracts or wireframe skeleton assumptions via `references/unblocked-modes.md`.
 
 ## References
