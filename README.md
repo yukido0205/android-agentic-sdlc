@@ -463,11 +463,11 @@ Generates an isolated workspace per ticket with zero LLM tokens:
   - `keystore.properties`, `secrets.properties` (signing configurations).
   - `google-services.json` (at root and across all submodules).
   - `.agents/` and `.claude/` (replicates all 11 Skills, Rules, and Pre-tool Guard hooks into the worktree).
-- **RAM Protection:** Injects `org.gradle.workers.max=2` into `.worktrees/<TICKET>/gradle.properties` to ensure concurrent Gradle daemons remain lean without exhausting system memory.
+- **Clean Git & Shared Daemon:** Leaves `gradle.properties` untouched so `git status` stays clean and sequential worktree builds reuse 1 warm Gradle Daemon (per-build worker throttling `--max-workers=2` is applied at runtime by `gradle-build.py`).
 
-### 🔒 2. Decoupled Build & Install via Mutex Device Lock (`suite-runner.py --install`)
-Eliminates untargeted installation commands:
-- **Build Phase (No device touch):** `./gradlew assembleDebug` (generates APK artifact only).
+### 🔒 2. OS-Flock Build Lock (`gradle-build.py`) & Mutex Device Lock (`suite-runner.py --install`)
+Eliminates RAM spikes and untargeted installation commands:
+- **Serialized Build Phase (No device touch):** Run `python3 scripts/gradle-build.py assembleDebug` inside `.worktrees/` (or `./gradlew assembleDebug` in single-repo mode). `gradle-build.py` uses OS-level `fcntl.flock()` semaphores (`/tmp/android_gradle_locks/slot-*.lock`, default `1` concurrent build slot, configurable via `ANDROID_SDLC_GRADLE_SLOTS`) and passes `--max-workers=2` so parallel agents never spawn competing Gradle Daemons.
 - **Isolated Install Phase:** Execute `suite-runner.py` with `--install`:
   ```bash
   python3 skills/test-runner/scripts/suite-runner.py .maestro/PAY-101/ -m step --install
@@ -478,10 +478,10 @@ Eliminates untargeted installation commands:
   3. Deploys the APK exclusively to that device (`adb -s <locked_device_id> install -r -t -d ...`).
   4. Runs Maestro test flows against the locked emulator in total isolation.
 
-### ⚡ 3. Mechanical Pre-Tool Gate Against Collision (`pre-tool-guard.py` — <20ms)
-If an agent attempts to run `./gradlew ... install...` without specifying `ANDROID_SERIAL` when 2 or more devices are active:
-- The mechanical guard `pre-tool-guard.py` intercepts and **denies the command in <20ms**.
-- Guides the agent to decoupled build (`./gradlew assembleDebug`) and isolated installation (`suite-runner.py --install`).
+### ⚡ 3. Mechanical Pre-Tool Gate Against Collisions (`pre-tool-guard.py` — <20ms)
+`pre-tool-guard.py` enforces both device and build safety mechanically:
+- **`[multi-device-guard]`:** Blocks un-isolated `install...` commands without `ANDROID_SERIAL` when 2 or more devices are active, guiding the agent to decoupled build + `suite-runner.py --install`.
+- **`[worktree-build-guard]`:** Blocks raw `./gradlew` inside worktrees (enforces `scripts/gradle-build.py`) and blocks `--stop` while another build slot is actively locked.
 
 ---
 
@@ -495,12 +495,13 @@ android-agentic-sdlc/
 ├── README_VI.md                  # Usage manual & synergy pipelines (Vietnamese)
 ├── install.sh                    # 1-click installer for Antigravity, Gemini CLI, and Claude Code
 ├── scripts/
+│   ├── gradle-build.py           # OS-flock Gradle build semaphore wrapper for multi-worktree builds
 │   ├── init-worktree.sh          # Zero-token Android Worktree initializer script (<0.2s)
 │   └── init_worktree.py          # Cross-platform Python worktree initializer
 ├── hooks/
 │   ├── hooks.json                # PreToolUse lifecycle hook configuration
 │   └── scripts/
-│       └── pre-tool-guard.py     # <20ms mechanical guard (Domain purity, Maestro YAML, CLI & Multi-device safety)
+│       └── pre-tool-guard.py     # <20ms mechanical guard (Domain purity, Maestro YAML, CLI, Multi-device & Worktree build safety)
 ├── rules/
 │   └── code-hygiene.md           # Always-on rule: Lean SOLID + Why-only Docs + YAGNI Simplify
 └── skills/

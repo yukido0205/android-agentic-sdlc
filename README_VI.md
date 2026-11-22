@@ -461,11 +461,11 @@ Tự động dựng workspace độc lập cho từng ticket mà không tốn b�
   - `keystore.properties`, `secrets.properties` (cấu hình ký app).
   - `google-services.json` (ở root và toàn bộ các sub-modules).
   - `.agents/` và `.claude/` (đồng bộ toàn bộ 11 Skills, Rules và Pre-tool Guard Hook sang worktree).
-- **Giới hạn RAM máy Mac:** Tự động tiêm `org.gradle.workers.max=2` vào `gradle.properties` của worktree để hạn chế tối đa tài nguyên, đảm bảo 2 Gradle daemon chạy song song mượt mà.
+- **Giữ sạch Git & Dùng chung 1 Daemon:** Giữ nguyên `gradle.properties` của repo gốc để `git status` sạch 100% và các worktree dùng chung 1 Gradle Daemon đang ấm (giới hạn `--max-workers=2` được truyền theo từng lượt build qua `gradle-build.py`).
 
-### 🔒 2. Tách Bước Build & Install Theo Device Mutex Lock (`suite-runner.py --install`)
-Thay vì để Agent gõ lệnh install bừa bãi:
-- **Bước Build (Không đụng thiết bị):** `./gradlew assembleDebug` (chỉ tạo file APK).
+### 🔒 2. Khóa Build Bằng OS Flock (`gradle-build.py`) & Device Mutex Lock (`suite-runner.py --install`)
+Chống tràn RAM máy Mac và tránh bắn nhầm APK:
+- **Bước Build Tuần Tự (Không đụng thiết bị):** Chạy `python3 scripts/gradle-build.py assembleDebug` trong `.worktrees/` (hoặc `./gradlew assembleDebug` khi chạy đơn lẻ). `gradle-build.py` dùng `fcntl.flock()` ở tầng hệ điều hành (`/tmp/android_gradle_locks/slot-*.lock`, mặc định `1` slot build đồng thời, chỉnh được qua `ANDROID_SDLC_GRADLE_SLOTS`) kèm `--max-workers=2`, đảm bảo các agent song song không sinh nhiều Gradle Daemon tranh RAM.
 - **Bước Install Độc Quyền:** Chạy `suite-runner.py` với cờ `--install`:
   ```bash
   python3 skills/test-runner/scripts/suite-runner.py .maestro/PAY-101/ -m step --install
@@ -476,10 +476,10 @@ Thay vì để Agent gõ lệnh install bừa bãi:
   3. Cài APK độc quyền vào đúng emulator đó (`adb -s <locked_device_id> install -r -t -d ...`).
   4. Chạy bộ test Maestro trên đúng emulator đó mà không chạm tới emulator của Agent kia.
 
-### ⚡ 3. Chốt Chặn Cơ Học Chống Bắn Đè APK (`pre-tool-guard.py` — <20ms)
-Nếu bất kỳ Agent nào vi phạm và gõ lệnh dạng `./gradlew ... install...` khi máy đang bật $\ge 2$ emulator mà không gắn `ANDROID_SERIAL`:
-- Hook cơ học `pre-tool-guard.py` lập tức **chặn đứng (`deny`) trong <20ms**.
-- Trả về thông báo hướng dẫn Agent chuyển sang quy trình chuẩn: `./gradlew assembleDebug` kết hợp `suite-runner.py --install`.
+### ⚡ 3. Chốt Chặn Cơ Học Chống Va Chạm (`pre-tool-guard.py` — <20ms)
+`pre-tool-guard.py` bảo vệ cơ học ở cả tầng thiết bị lẫn tầng build:
+- **`[multi-device-guard]`:** Chặn lệnh `install...` thiếu `ANDROID_SERIAL` khi máy đang bật $\ge 2$ emulator và hướng dẫn chuyển sang quy trình build tách rời + `suite-runner.py --install`.
+- **`[worktree-build-guard]`:** Chặn gọi thẳng `./gradlew` trong worktree (bắt buộc qua `scripts/gradle-build.py`) và chặn `--stop` khi đang có build slot hoạt động.
 
 ---
 
@@ -493,12 +493,13 @@ android-agentic-sdlc/
 ├── README_VI.md                  # Hướng dẫn sử dụng & 3 chuỗi kết hợp (Tiếng Việt)
 ├── install.sh                    # Script cài đặt 1 chạm cho Antigravity, Gemini CLI & Claude Code
 ├── scripts/
+│   ├── gradle-build.py           # Wrapper khóa build Gradle bằng OS flock cho nhiều worktree
 │   ├── init-worktree.sh          # Script khởi tạo Android Worktree chuẩn, 0-token (<0.2s)
 │   └── init_worktree.py          # Bản Python cross-platform của bộ khởi tạo worktree
 ├── hooks/
 │   ├── hooks.json                # Cấu hình PreToolUse lifecycle hook
 │   └── scripts/
-│       └── pre-tool-guard.py     # Chốt chặn cơ học <20ms (Domain purity, Maestro YAML, CLI & Multi-device safety)
+│       └── pre-tool-guard.py     # Chốt chặn cơ học <20ms (Domain purity, Maestro YAML, CLI, Multi-device & Worktree build safety)
 ├── rules/
 │   └── code-hygiene.md           # Quy tắc nền luôn bật: Lean SOLID + Why-only Docs + YAGNI Simplify
 └── skills/

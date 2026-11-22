@@ -71,7 +71,7 @@ python3 skills/test-runner/scripts/suite-runner.py <target> [options]
 When running multiple agents in parallel on 1 Mac with 2+ Emulators:
 1. **Never run raw `./gradlew install...` without `ANDROID_SERIAL`**: Gradle broadcasts APKs across all active emulators, colliding with concurrent agent runs. The mechanical guard `pre-tool-guard.py` will block this immediately (<20ms).
 2. **Decouple Build and Install**:
-   - **Step 1 (Build)**: Run `./gradlew assembleDebug` (pure artifact compile, zero emulator interaction).
+   - **Step 1 (Build)**: Run `./gradlew assembleDebug` (or `python3 scripts/gradle-build.py assembleDebug` inside `.worktrees/` to serialize builds via OS `flock`). Pure artifact compile, zero emulator interaction.
    - **Step 2 (Install & Verify)**: Run `suite-runner.py` with `--install`:
      ```bash
      python3 skills/test-runner/scripts/suite-runner.py <target> -m step --install
