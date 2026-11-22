@@ -16,10 +16,11 @@ This is the second half of one pipeline: `/plan-feature` (sources, questions, st
 
 ## Cognitive Load Reduction Rules (Anti-Overmanagement & Anti-Fatigue)
 
-1. **Lean 2-File Architecture (Strict Limit):**
-   - **`PLAN.md`**: Single source of truth for scope, questions, stories, acceptance criteria, step execution ladder, and follow-ups.
+1. **Lean 2-File Architecture (+ Optional `FIGMA-CACHE.md`):**
+   - **`PLAN.md`**: Single source of truth for scope, screen map, questions, stories, compact step tables, `<details>` Technical Decisions, and follow-ups — keeping cross-slice delta checks to a single read (`PLAN.md` + `CONTRACT.md`).
    - **`CONTRACT.md`**: Shared Kotlin/Swift types, interfaces, navigation keys, and MVI state/intent/event.
-   - **Eliminated Files:** Do NOT create separate `TASK-BREAKDOWN.md`, `PRD-TRACE.md`, `REGRESSION.md`, `TICKETS.md`, `use-cases.md`, or individual `slices/*.md` files (keep steps inline in `PLAN.md §4` unless `PLAN.md` exceeds 600 lines).
+   - **`FIGMA-CACHE.md` (Optional):** Machine-read cache for raw Figma node trees, tokens, and copy when Figma is large; mapped via the 1-row-per-screen `Screen Map` in `PLAN.md §1`.
+   - **Eliminated Files:** Do NOT create separate `TASK-BREAKDOWN.md`, `PRD-TRACE.md`, `REGRESSION.md`, `TICKETS.md`, `use-cases.md`, or individual `slices/*.md` files. Instead of splitting files on large epics, control length inside `PLAN.md` via **Dense Tables + `<details>` Folding + `DONE` Step Compaction**.
 2. **Executive Summary First:** Mode responses begin with a 3-line check:
    - `[Red Flags]`: Breaking Contract/PRD conflicts? (Yes/No + 1 sentence).
    - `[Missing Data]`: Any unmapped fields or unrouted PRD hits?
@@ -53,9 +54,9 @@ Files are kept strictly within `PLAN.md` and `CONTRACT.md`.
 | Mode | Session Owner | Trigger | Writes | Does NOT write / Hard Boundary |
 |---|---|---|---|---|
 | `init <EPIC>` | Tech Lead (Session 1) | `/plan-slicing init <EPIC>` | `CONTRACT.md` + appends high-level `§4 Slices Overview` table (`Status: NOT PLANNED`) to `PLAN.md` | Individual step breakdowns for slices. **Ends with `/clear`.** |
-| `plan <slice-id>` | Slice Owner (Session 2) | `/plan-slicing plan <slice-id>` | High-level step ladder (`step-01..step-05`: Goal + AC only) for **that 1 slice** under `PLAN.md §4` | Premature file-level tasks or other slices' steps. **Ends with `/clear`.** |
-| `step <slice-id> <step-id>` | Step Dev (Fresh Session per Step) | `/plan-slicing step <slice-id> <step-id>` | Scans code for `<step-id>` only → writes JIT micro-tasks → codes `<step-id>` → updates `PLAN.md §4` | Code or detailed plans for the next step. **Ends with `/clear`.** |
-| `update` | Any | "step-02 in review / merged / blocked", "question-04 answered" | Updates affected rows in `PLAN.md` | — |
+| `plan <slice-id>` | Slice Owner (Session 2) | `/plan-slicing plan <slice-id>` | Compact 1-row-per-step table (`step-01..step-05`: Scope + Key AC) + empty `<details>` Technical Decisions block for **that 1 slice** under `PLAN.md §4` | Premature file-level tasks or other slices' steps. **Ends with `/clear`.** |
+| `step <slice-id> <step-id>` | Step Dev (Fresh Session per Step) | `/plan-slicing step <slice-id> <step-id>` | Scans code for `<step-id>` only → writes JIT `Files`/`Decisions`/`Tasks` inside the slice's `<details>` → codes `<step-id>` → compacts `DONE` step into 1–3 lines of permanent Technical Decisions | Code or detailed plans for the next step. **Ends with `/clear`.** |
+| `update` | Any | "step-02 in review / merged / blocked", "question-04 answered" | Updates affected table rows in `PLAN.md`; compacts merged steps & folds answered questions into `<details>` | — |
 | `progress` | Any | `/plan-slicing progress <EPIC>` | Nothing — reads `PLAN.md §4` and verifies against git | — |
 
 ---
@@ -80,23 +81,23 @@ Append ONLY the **Slices Overview table** to `PLAN.md §4` with Slice ID (`slice
 
 Run in a **fresh session** for **one requested slice only** (never all slices at once):
 - Read `CONTRACT.md` and grep the PRD strictly for rules/edge cases touching `<slice-id>`.
-- Cut `<slice-id>` into 3–5 lightweight steps directly under `PLAN.md §4` (**one step = one MR**, ≤ 300 lines):
+- Cut `<slice-id>` into a compact 3–5 row step table (`| Step | Scope | Key Acceptance (Observable) | Status | MR / Commit |`) plus an empty collapsible `<details><summary>📌 Technical Decisions & Active Step Plan (<slice-id>)</summary></details>` block directly under `PLAN.md §4` (**one step = one MR**, ≤ 300 lines):
   1. **No-UI logic (`step-01`)** — validation, formatters, domain mappers (unknown backend data → safe state).
   2. **Walking skeleton (`step-02`)** — UI on mock data, wired to MVI ViewModel, merged **unreachable** behind a flag/router.
   3. **Happy path (`step-03`)** — real API/DB integration for the success case.
   4. **Errors & edge cases (`step-04`)** — timeout, 4xx, 5xx, offline, retry.
   5. **Polish (`step-05`)** — loading skeletons, analytics, haptics.
-- **Anti-Hallucination Rule:** Write only each step's **Scope goal** and observable **Acceptance Criteria (AC)**. Leave file-level micro-tasks to be discovered just-in-time when the developer starts that specific step's session.
+- **Anti-Hallucination Rule:** Write only each step's **Scope** and observable **Key Acceptance** in the table. Leave file-level micro-tasks to be discovered just-in-time when the developer starts that specific step's session.
 > 🛑 **Session Boundary (`plan` complete):** Stop here. Instruct the developer:
-> *"Step ladder for `<slice-id>` is saved in `PLAN.md §4`. Open a **fresh session (`/clear`)** for each step and run `/plan-slicing step <slice-id> step-01`."*
+> *"Step table for `<slice-id>` is saved in `PLAN.md §4`. Open a **fresh session (`/clear`)** for each step and run `/plan-slicing step <slice-id> step-01`."*
 
 ### Step 3 — Plan detail & build ONE step per fresh session (`step <slice-id> <step-id>`)
 
 Run in a **dedicated fresh session** for a single step (`<step-id>`):
 1. **Phase A — Just-In-Time (JIT) Step Micro-Plan:**
-   - Read `CONTRACT.md` and `<step-id>`'s Scope/AC in `PLAN.md §4`.
+   - Read `CONTRACT.md`, `<step-id>`'s row in `PLAN.md §4`, and all prior steps' **Technical Decisions** inside `<slice-id>`'s `<details>` block (anti-hallucination anchor).
    - Scan the actual codebase *only* for the files relevant to `<step-id>`.
-   - Formulate the exact micro-tasks (which 3–5 files to create/modify) and update `<step-id>`'s `Tasks` checklist in `PLAN.md §4`.
+   - Record `<step-id>`'s concise `Files`, `Decisions`, and `Tasks` inside `<slice-id>`'s `<details>` block in `PLAN.md §4`, and mark its table row `IN PROGRESS`.
 2. **Phase B — Scoped Implementation:**
    - Scope isolation: code **only** current step `<step-id>`. Reuse existing widgets/utils first.
    - **Code Hygiene Guardrails (`rules/code-hygiene.md`):**
@@ -107,9 +108,10 @@ Run in a **dedicated fresh session** for a single step (`<step-id>`):
    - Fallback discipline: missing backend field maps to the **safe state** (`UNKNOWN`), never optimistic.
    - Ambiguity mid-step: stop, add a `question-<NN>` to `PLAN.md §2`, do not guess.
    - Deferred work / discovered debt goes directly into `PLAN.md §5 Follow-ups & Phase 2`.
-3. **Phase C — Verify, Ship & `/clear`:**
+3. **Phase C — Verify, Ship, Compact & `/clear`:**
    - Run device/unit verification (`test-runner`) for `<step-id>`'s Acceptance lines, then run `ship-mr` Steps 1–3 to audit the ≤300-line diff budget and generate the commit/MR description.
-   - Update `<step-id>` status in `PLAN.md §4`.
+   - Update `<step-id>`'s row in `PLAN.md §4` (`REVIEWING` with MR link, or `DONE` with verified commit hash).
+   - **Step Compaction (Anti-Bloat + Anti-Hallucination):** When `<step-id>` is `DONE`, drop its checked-off boilerplate `Tasks` list inside `<details>` and compact it into **1–3 lines of permanent Technical Decisions** (exact file paths, class/flag names, DI seams, and invariants) so later steps and cross-slice deltas stay grounded without bloating `PLAN.md`.
    - 🛑 **Session Boundary (`step` complete):** Instruct the developer:
      > *"Step `<step-id>` is complete and persisted in `PLAN.md`. Run `/clear` (open a fresh session) before starting the next step."*
 
@@ -117,20 +119,21 @@ Run in a **dedicated fresh session** for a single step (`<step-id>`):
 
 - When real dependency lands: swap mock → real at the single DI point.
 - Status lifecycle: `TODO` → `IN PROGRESS` → `REVIEWING` (MR open) → `DONE` (merged).
-- Tick step in `PLAN.md §4` only on merge, with commit hash verified from git tree.
+- Mark `DONE` in the `PLAN.md §4` table only on merge (with commit hash verified from git tree), and compact that step's `<details>` entry to permanent Technical Decisions.
+- When a `question-<NN>` is answered, move it from the `Open Questions` table into the `<details><summary>Resolved Questions (N)</summary>` table in `PLAN.md §2`.
 
 ---
 
 ## Iron Rules
 
-1. **Lean 2-File Architecture:** All plans, stories, questions, steps, and follow-ups stay in `PLAN.md`. Types live in `CONTRACT.md`. Never generate 10+ md files.
+1. **Lean 2-File Architecture (+ Optional `FIGMA-CACHE.md`):** All epic plans, stories, questions, compact step tables, and `<details>` Technical Decisions stay in `PLAN.md`. Shared types live in `CONTRACT.md`. Never generate 10+ md files.
 2. **The Contract is versioned; enforce its freeze or call it a draft.**
 3. **Mocks conform to the Contract, never to a slice's internals.**
 4. **Unknowns carry an assumption in force.** No silent assumptions.
 5. **Placeholders never lie.** Unknown backend values map to the safe state, never the optimistic one.
 6. **One step, one MR, ≤ 300 lines.** Over budget → split the step.
-7. **Verify, don't recall.** A `DONE` step names a verified commit hash.
-8. **Zero Happy Path & Cognitive Load Reduction.** Executive Summary first, concise tables, no filler prose.
+7. **Verify, don't recall.** A `DONE` step names a verified commit hash and keeps 1–3 lines of compacted Technical Decisions.
+8. **Zero Happy Path & Cognitive Load Reduction.** Executive Summary first, dense tables, `<details>` folding, no filler prose.
 
 ## References
 
