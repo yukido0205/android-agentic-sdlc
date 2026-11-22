@@ -25,7 +25,7 @@ API: <path or link>
 Replaces: <screen being replaced, if any>
 ```
 
-- **Output:** Creates `plans/<EPIC>/PLAN.md` (Sections 1: Sources, 2: Questions & Assumptions, 3: Stories & Acceptance Criteria).
+- **Output:** Creates `plans/<EPIC>/PLAN.md` (Section 1: Sources & Screen Map, Section 2: Dense Open Questions table, Section 3: Dense Stories & Acceptance Criteria table). Emits persona-aware Slack snippets in chat only, and offloads large raw Figma dumps to optional `plans/<EPIC>/FIGMA-CACHE.md`.
 - **Gate:** PM/BE questions resolved or carrying assumption in force; Phase 1 cut confirmed.
 
 ### 2. Contract and Slices Overview (Lead, Session 1)
@@ -46,9 +46,9 @@ Replaces: <screen being replaced, if any>
 /plan-slicing plan slice-01
 ```
 
-- **Output:** Cuts **only `slice-01`** into a lightweight 3–5 step outline (`step-01`..`step-05`: Scope goal + Acceptance Criteria) directly inside `PLAN.md §4`.
+- **Output:** Cuts **only `slice-01`** into a compact 3–5 row step table (`step-01`..`step-05`: Scope + Key Acceptance) plus a collapsible `<details>` Technical Decisions block directly inside `PLAN.md §4`.
 - **Granularity:** 3–5 steps, each step = one MR (150–250 lines diff, ≤ 300 max).
-- **Handoff:** Once the step ladder for `slice-01` is saved, **run `/clear` (open a fresh session)** before building `step-01`.
+- **Handoff:** Once the step table for `slice-01` is saved, **run `/clear` (open a fresh session)** before building `step-01`.
 
 ### 4. Micro-Plan & Build One Step Per Fresh Session (Developer, Session 3..N)
 
@@ -57,20 +57,21 @@ Replaces: <screen being replaced, if any>
 ```
 
 - **1 Step = 1 Fresh Session = 1 MR:**
-  - **JIT Micro-Plan:** Scans the codebase only for `step-01`, identifies the exact 3–5 files to touch, and fills in `step-01`'s `Tasks` in `PLAN.md §4`.
+  - **JIT Micro-Plan:** Scans the codebase only for `step-01`, identifies the exact 3–5 files to touch, and records `Files`, `Decisions`, and `Tasks` inside `slice-01`'s `<details>` block in `PLAN.md §4`.
   - **Scope isolation:** Touch only layers for `step-01` under `rules/code-hygiene.md`.
   - **Mergeable discipline:** `step-02` (walking skeleton) merges behind a feature flag or unreachable router.
   - **Tests & Budget check:** At most one test file per step; `git diff --stat <target> -- . ':!*/res/*'` (≤ 300 lines).
+  - **Compaction on `DONE`:** Once merged, drop checked-off boilerplate tasks and compact `step-01` inside `<details>` into 1–3 lines of permanent **Technical Decisions** (files, classes, flags, DI seams).
   - **Repeat:** Commit/ship MR via `/ship-mr`, then **run `/clear`** before starting `step-02` in a new session.
 
 ### 5. Keep Status Updated
 
 | Say | Effect |
 |---|---|
-| `slice-01 step-02 in review, MR !1234` | Updates `step-02` status to `REVIEWING` with MR link in `PLAN.md §4` |
-| `slice-01 step-02 merged` | Ticks checkbox, marks `DONE` with commit hash in `PLAN.md §4` |
+| `slice-01 step-02 in review, MR !1234` | Updates `step-02` row to `REVIEWING` with MR link in `PLAN.md §4` |
+| `slice-01 step-02 merged` | Marks `DONE` with commit hash in `PLAN.md §4` and compacts `step-02` inside `<details>` to permanent Technical Decisions |
 | `slice-01 step-03 blocked — missing BE API` | Marks `BLOCKED` with reason in `PLAN.md §4`; dependent steps `ON HOLD` |
-| `question-02 answered: <ruling>` | Updates `PLAN.md §2` and keeps rejected option as history |
+| `question-02 answered: <ruling>` | Moves `question-02` into the `Resolved Questions` `<details>` table in `PLAN.md §2` with superseded assumption kept as history |
 | `/plan-slicing progress <EPIC>` | Reports step progress directly from `PLAN.md §4` verified against git |
 
 ---
