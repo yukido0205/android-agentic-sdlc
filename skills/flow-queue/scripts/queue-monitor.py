@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import json, os, re, shutil, subprocess, sys, time
 from pathlib import Path
 
 LOCK_DIR = Path("/tmp/android_device_locks")
+GRADLE_LOCK_DIR = Path("/tmp/android_gradle_locks")
 PHASE_NAMES = {"0": "Init", "1": "Ground", "2": "Build", "3": "Prove", "4": "Ship", "5": "Feedback"}
 
 
@@ -44,6 +46,51 @@ def read_device_locks() -> dict[str, dict]:
     return locks
 
 
+def read_gradle_locks() -> tuple[dict[str, dict], list[dict]]:
+    """Read active Gradle build slots (via non-blocking flock probe) and waiting queue."""
+    active: dict[str, dict] = {}
+    waiting: list[dict] = []
+    if not GRADLE_LOCK_DIR.exists():
+        return active, waiting
+
+    for f in sorted(GRADLE_LOCK_DIR.glob("slot-*.lock")):
+        try:
+            fd = os.open(f, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raw = os.read(fd, 4096).decode("utf-8", errors="replace").strip()
+                try:
+                    data = json.loads(raw) if raw else {}
+                except json.JSONDecodeError:
+                    data = {}
+                active[f.stem] = data
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    for wf in sorted(GRADLE_LOCK_DIR.glob("wait-*.json")):
+        try:
+            data = json.loads(wf.read_text(encoding="utf-8"))
+            pid = int(data.get("pid") or 0)
+            if pid <= 0:
+                continue
+            os.kill(pid, 0)
+            waiting.append(data)
+        except ProcessLookupError:
+            wf.unlink(missing_ok=True)
+        except PermissionError:
+            waiting.append(data)
+        except (ValueError, OSError, json.JSONDecodeError):
+            continue
+
+    return active, waiting
+
+
 def list_adb_devices() -> list[str]:
     """Return connected ADB device serials with a short timeout."""
     adb = shutil.which("adb") or os.path.expanduser("~/Library/Android/sdk/platform-tools/adb")
@@ -74,9 +121,16 @@ def parse_state_file(path: Path) -> dict[str, str]:
     }
 
 
-def collect_tickets(repo_root: Path, locks: dict[str, dict]) -> list[dict[str, str]]:
+def collect_tickets(
+    repo_root: Path,
+    locks: dict[str, dict],
+    gradle_active: dict[str, dict] | None = None,
+    gradle_waiting: list[dict] | None = None,
+) -> list[dict[str, str]]:
     """Collect ticket state across root plans/ and .worktrees/*/plans/."""
     tickets: dict[str, dict[str, str]] = {}
+    building_tickets = {str(v.get("ticket", "")).upper(): v for v in (gradle_active or {}).values() if v.get("ticket")}
+    waiting_tickets = {str(v.get("ticket", "")).upper(): v for v in (gradle_waiting or []) if v.get("ticket")}
 
     def scan_plans(base: Path) -> None:
         if not base.exists():
@@ -98,8 +152,14 @@ def collect_tickets(repo_root: Path, locks: dict[str, dict]) -> list[dict[str, s
     for ticket, row in tickets.items():
         dev = next((d for d, l in locks.items() if ticket.upper() in str(l.get("target", "")).upper()), "-")
         row["device"] = dev
+        t_upper = ticket.upper()
         if dev != "-":
             row["status"] = "⚙️  E2E RUNNING"
+        elif t_upper in building_tickets:
+            tasks = " ".join(building_tickets[t_upper].get("tasks") or [])
+            row["status"] = f"🔨 BUILDING ({tasks[:24]})" if tasks else "🔨 BUILDING"
+        elif t_upper in waiting_tickets:
+            row["status"] = "⏳ WAIT BUILD"
         elif row["waiting"]:
             row["status"] = f"🔔 WAITING GATE {row['waiting']}"
         elif row["gate"] == "3":
@@ -112,13 +172,14 @@ def collect_tickets(repo_root: Path, locks: dict[str, dict]) -> list[dict[str, s
 
 
 def render_dashboard(repo_root: Path) -> str:
-    """Render ANSI queue status and emulator pool dashboard."""
+    """Render ANSI queue status, Gradle build slots, and emulator pool dashboard."""
     locks, devices = read_device_locks(), list_adb_devices()
-    rows = collect_tickets(repo_root, locks)
+    gradle_active, gradle_waiting = read_gradle_locks()
+    rows = collect_tickets(repo_root, locks, gradle_active, gradle_waiting)
     now, div = dt.datetime.now().strftime("%H:%M:%S"), "═" * 82
     out = [
         f"\033[1;36m{div}\033[0m",
-        f"\033[1;36m🚀 SDLC QUEUE MONITOR [{now}] — Tickets: {len(rows)} | Devices: {len(devices)} | Active Locks: {len(locks)}\033[0m",
+        f"\033[1;36m🚀 SDLC QUEUE MONITOR [{now}] — Tickets: {len(rows)} | Builds: {len(gradle_active)} | Devices: {len(devices)} | Locks: {len(locks)}\033[0m",
         f"\033[1;36m{div}\033[0m",
         f"{'TICKET':<12} {'TYPE':<6} {'TRACK':<7} {'PHASE':<13} {'GATE':<5} {'DEVICE':<15} {'STATUS'}",
         "─" * 82,
@@ -131,6 +192,17 @@ def render_dashboard(repo_root: Path) -> str:
         if r["waiting"]:
             waiting.append(f"{r['ticket']}:G{r['waiting']}")
         out.append(f"{r['ticket']:<12} {r['kind']:<6} {r['track']:<7} {p_label:<13} {r['gate']}/3   {r['device']:<15} {r['status']}")
+
+    out.extend(["─" * 82, "🔧 BUILD SLOTS:"])
+    if not gradle_active and not gradle_waiting:
+        out.append("  • Idle (no active Gradle builds)")
+    for slot_name, info in sorted(gradle_active.items()):
+        age = int(time.time() - info.get("acquired_at", time.time()))
+        tasks = " ".join(info.get("tasks") or []) or "gradlew"
+        out.append(f"  • {slot_name:<16}: 🔨 BUILDING ({info.get('ticket', '?')}: {tasks}, {age}s)")
+    for w in gradle_waiting:
+        age = int(time.time() - w.get("waiting_since", time.time()))
+        out.append(f"  • {'waiting':<16}: ⏳ {w.get('ticket', '?')} queued for build slot ({age}s)")
 
     out.extend(["─" * 82, "📱 EMULATOR POOL:"])
     if not devices and not locks:

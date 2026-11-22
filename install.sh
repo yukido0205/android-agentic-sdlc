@@ -92,6 +92,9 @@ install_into_dir() {
     link_or_copy "$REPO_DIR/scripts/init-worktree.sh" "$base_dir/scripts/init-worktree.sh"
     link_or_copy "$REPO_DIR/scripts/init_worktree.py" "$base_dir/scripts/init_worktree.py"
   fi
+  if [[ -f "$REPO_DIR/scripts/gradle-build.py" ]]; then
+    link_or_copy "$REPO_DIR/scripts/gradle-build.py" "$base_dir/scripts/gradle-build.py"
+  fi
 
   if [[ "$include_hooks_json" == "true" ]]; then
     link_or_copy "$REPO_DIR/hooks/hooks.json" "$base_dir/hooks.json"
@@ -118,7 +121,8 @@ if [[ "$SCOPE" == "project" ]]; then
   mkdir -p "$PROJECT_DIR/scripts"
   link_or_copy "$REPO_DIR/scripts/init-worktree.sh" "$PROJECT_DIR/scripts/init-worktree.sh"
   link_or_copy "$REPO_DIR/scripts/init_worktree.py" "$PROJECT_DIR/scripts/init_worktree.py"
-  echo "✅ Installed Worktree Initializer         -> $PROJECT_DIR/scripts/init-worktree.sh ($MODE)"
+  link_or_copy "$REPO_DIR/scripts/gradle-build.py" "$PROJECT_DIR/scripts/gradle-build.py"
+  echo "✅ Installed Worktree & Build Scripts  -> $PROJECT_DIR/scripts/ ($MODE)"
 elif [[ "$SCOPE" == "global" ]]; then
   if [[ "$TARGET" == "agy" || "$TARGET" == "all" ]]; then
     install_into_dir "$HOME/.gemini/config" "true"

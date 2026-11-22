@@ -77,7 +77,7 @@ Wait for user decision. Record user response under **Decision & Step Ladder**.
 6. **Unit Tests & Decoupled Compile:**
    - Add unit tests for new logic (at most 1 test file per step).
    - Run project linter (`ktlintCheck`, `spotlessCheck`, or `detekt`).
-   - **Decoupled Compile:** Run `./gradlew assembleDebug` (generates APK artifact only, zero device touch). Build failure → fix once; if it fails again, stop.
+   - **Decoupled Compile:** Run `./gradlew assembleDebug` (in `.worktrees/<TICKET>/`, use `python3 scripts/gradle-build.py assembleDebug` or `.agents/scripts/gradle-build.py` to serialize builds via OS `flock`). Build failure → fix once; if it fails again, stop. (Exit `75` / `[BUILD_SLOT_BUSY]` means another worktree is building—retry without editing code.)
 
 ---
 
@@ -130,6 +130,6 @@ Print push command (`git push -u origin <branch>`) and MR body. User pushes.
 
 - **Zero Code Before Gate 1:** Phase 1 is strictly read-only.
 - **Allowlist Scope Enforcement:** `git diff --name-only` must never exceed Direct Impact files. Max 300 lines diff per step.
-- **Decoupled Build & Install:** Use `./gradlew assembleDebug` to compile; use `suite-runner.py --install` to deploy to device. Raw `./gradlew installDebug` without `ANDROID_SERIAL` is mechanically blocked.
+- **Decoupled Build & Install:** Use `./gradlew assembleDebug` (or `python3 scripts/gradle-build.py assembleDebug` inside `.worktrees/`) to compile; use `suite-runner.py --install` to deploy to device. Raw `./gradlew installDebug` without `ANDROID_SERIAL` is mechanically blocked.
 - **Single-File State Tracking:** All status lives in `plans/<TICKET>/flow-task.md`. Never generate redundant markdown files.
 - **Strict Selector Quality:** Author Maestro flows using semantic selectors (`id:` / `text:`). Coordinate taps (`point:`) are blocked by `pre-tool-guard.py`.

@@ -40,7 +40,7 @@ Run **one single shell command** from repo root:
 ```bash
 python3 skills/flow-queue/scripts/queue-monitor.py --init <TICKET_1> <TICKET_2> ...
 ```
-This creates `.worktrees/<TICKET>` (`<0.2s` each), symlinks Android SDK/keystores/skills, and sets `org.gradle.workers.max=2` to protect macOS RAM.
+This creates `.worktrees/<TICKET>` (`<0.2s` each) and symlinks Android SDK/keystores/skills without dirtying `gradle.properties`.
 
 ---
 
@@ -51,7 +51,7 @@ Invoke up to **3 concurrent background sub-agents** (queued in waves if >3 ticke
 1. **Strict Worktree Confinement:** Read, edit, compile, and run git/gradle/maestro **only** inside `.worktrees/<TICKET>/`. Never touch root repo source files.
 2. **Skill Fidelity:** Read and follow `skills/flow-bug/SKILL.md` (for `bug`) or `skills/flow-task/SKILL.md` (for `task`) verbatim. Do not skip `test-hunter`, `guard-blast`, `code-hygiene.md`, or `suite-runner.py --install`.
 3. **Gate Stop Boundary:** Complete **Phase 1 (Read-Only Grounding)**, write `plans/<TICKET>/flow-{bug,task}.md` containing `[WAITING_GATE_1]` on its status header, then **STOP IMMEDIATELY** and return a concise Gate 1 summary (≤ 6 bullets). Never edit production code before Gate 1 approval.
-4. **Decoupled Build & Device Lease:** In Phase 2–3, compile via `./gradlew assembleDebug` only; deploy & verify exclusively via `python3 skills/test-runner/scripts/suite-runner.py ... --install` so parallel agents auto-lease separate emulators safely.
+4. **Decoupled Build Lock & Device Lease:** In Phase 2–3, compile via the OS-flock wrapper (`python3 scripts/gradle-build.py assembleDebug` or `.agents/scripts/gradle-build.py`, never raw `./gradlew` or `--stop`) so builds serialize cleanly onto 1 shared warm daemon without RAM spikes; deploy & verify exclusively via `python3 skills/test-runner/scripts/suite-runner.py ... --install` so parallel agents auto-lease separate emulators safely. (If `gradle-build.py` exits with `75` / `[BUILD_SLOT_BUSY]`, wait briefly and retry the exact same command—do **not** edit code.)
 
 ---
 
@@ -71,6 +71,6 @@ Wait for the user's single batched reply (e.g., *"Approve all"*, or *"Approve PA
 
 ## Coordinator Iron Rules
 
-- **Zero Direct Edits by Coordinator:** The main chat agent must never edit Kotlin/XML/Gradle files or run `./gradlew` directly—always delegate to the ticket's sub-agent inside `.worktrees/<TICKET>/`.
+- **Zero Direct Edits by Coordinator:** The main chat agent must never edit Kotlin/XML/Gradle files or run `./gradlew` / `gradle-build.py` directly—always delegate to the ticket's sub-agent inside `.worktrees/<TICKET>/`.
 - **No Redundant Tracking Files:** Never create queue-level `.md`/`.json` files; `queue-monitor.py` reads directly from each ticket's `plans/<TICKET>/flow-{bug,task}.md` and `/tmp/android_device_locks/*.lock`.
 - **Diff Budget Respect:** Every ticket sub-agent must still respect its ≤ 300 lines per step MR cap.
