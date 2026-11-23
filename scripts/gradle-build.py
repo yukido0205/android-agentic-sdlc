@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/gradle-build.py — Zero-token OS-level Gradle Build Lock wrapper for multi-worktree builds.
+"""scripts/gradle-build.py — Native OS-level Gradle Build Lock wrapper for multi-worktree builds.
 
 Serializes heavy ./gradlew invocations across parallel worktrees using fcntl.flock()
 semaphores (/tmp/android_gradle_locks/slot-*.lock) without modifying any project

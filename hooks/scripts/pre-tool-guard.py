@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pre-tool-guard.py — Zero-token, <20ms PreToolUse mechanical guardrails for Mobile Agent Skills.
+pre-tool-guard.py — Fast (<20ms) PreToolUse mechanical guardrails for Mobile Agent Skills.
 
 Enforces 5 hard rules before a tool executes:
 1. [domain-purity-guard] Blocks `import android.*` / `import androidx.*` inside `/domain/` Kotlin files.

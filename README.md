@@ -4,7 +4,7 @@
 > 📐 **Architecture & Case Studies:** [English (OVERVIEW.md)](./OVERVIEW.md) | [Tiếng Việt (OVERVIEW_VI.md)](./OVERVIEW_VI.md)
 
 > **A production-grade engineering harness for Android & Kotlin teams.**  
-> Powered by **11 Specialized SDLC Agent Skills**, **1 Always-On Core Rule (`rules/code-hygiene.md`)**, and **1 Zero-Token PreToolUse Hook (`hooks/hooks.json`)**—built to turn AI coding assistants from unpredictable code generators into disciplined, regression-free mobile engineering partners.
+> Powered by **11 Specialized SDLC Agent Skills**, **1 Always-On Core Rule (`rules/code-hygiene.md`)**, and **1 Mechanical PreToolUse Hook (`hooks/hooks.json`)**—built to turn AI coding assistants from unpredictable code generators into disciplined, regression-free mobile engineering partners.
 
 ---
 
@@ -25,7 +25,7 @@ When AI agents are dropped into real-world Android codebases without mobile-spec
 ### Four Core Engineering Pillars
 
 1. **Context Hygiene via 3-Tier Just-In-Time (JIT) Slicing:** LLMs lose accuracy when forced to hold an entire epic in context. We persist state in lean files (`PLAN.md` & `CONTRACT.md`) and intentionally wipe session memory (`/clear`) between **Lead Contract Init $\to$ Slice Outline $\to$ Step Implementation**.
-2. **Zero-Token-Bleed Native Execution:** Never spend LLM tokens on deterministic work. Static validation, lifecycle guardrails (`<20ms`), and high-volume Maestro test orchestration (~270 flows) run in native Python scripts outside the LLM token loop.
+2. **Native Offloaded Execution (Flat Token Overhead):** Keep deterministic work out of per-step LLM loops. Static validation, lifecycle guardrails (`<20ms`), and high-volume Maestro test orchestration run in native Python scripts—keeping agent orchestration overhead flat regardless of suite size instead of scaling linearly with every test step.
 3. **Diagnosis Before Mutation & Blast Radius Containment:** Investigation and modification are strictly separated. An agent cannot touch a line of production code until root cause is proven (`test-hunter`) and an editable file allowlist is locked (`guard-blast`).
 4. **Human-in-the-Loop at High-Leverage Gates:** Instead of fatiguing developers with constant micro-prompts—or running blindly to completion—workflows pause at **3 high-leverage decision gates** (*Approve Diagnosis $\to$ Approve Reproduction $\to$ Approve Fix*).
 
@@ -41,7 +41,7 @@ flowchart LR
         R["rules/code-hygiene.md<br/>• Pre-Code: Lean SOLID<br/>• During-Code: Why-Only Docs<br/>• Post-Code: YAGNI Simplify"]
     end
 
-    subgraph L2["🔒 Layer 2: Hard Gate (<20ms, 0-Token Hook)"]
+    subgraph L2["🔒 Layer 2: Hard Gate (<20ms Mechanical Hook)"]
         H["hooks/pre-tool-guard.py<br/>• Blocks android.* in /domain/<br/>• Blocks point: taps in Maestro<br/>• Blocks raw maestro CLI & git --force"]
     end
 
@@ -59,7 +59,7 @@ Code quality is an invariant, not an optional slash command. Loaded automaticall
 - **Post-Code (YAGNI Simplify):** Enforces guard clauses (early returns), removes debug logs (`Log.d`), and forbids test-only `public` APIs.
 
 ### 🔒 Layer 2: PreToolUse Lifecycle Hook (`hooks/hooks.json` & `pre-tool-guard.py`) — *Hard Mechanical Gate*
-LLMs can forget instructions when context grows; Python scripts do not. Executes in **<20ms** at **0 token cost** before `write_file`, `edit_file`, or `run_command` to mechanically block slips:
+LLMs can forget instructions when context grows; Python scripts do not. Executes natively in **<20ms** outside the LLM loop before `write_file`, `edit_file`, or `run_command` to mechanically block slips:
 - **`[domain-purity-guard]`:** Denies any file write/edit inside `/domain/` that introduces `import android.*` or `import androidx.*`.
 - **`[maestro-static-gate]`:** Denies `.maestro/**/*.yaml` writes/edits that violate `ac-NN-<slug>.yaml` naming, use hardcoded coordinate taps (`point: x, y`), or omit assertions.
 - **`[command-safety-guard]`:** Denies raw `maestro test` CLI invocations (enforcing `suite-runner.py` to prevent context bleed) and forces explicit user confirmation (`force_ask`) on destructive Git/ADB commands (`git reset --hard`, `git push --force`, `adb uninstall`).
@@ -75,7 +75,7 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 | **`test-hunter`** | `skills/test-hunter` | `/test-hunter <ticket\|log>` | Test (Diagnosis) | Strictly read-only root cause investigator. Produces diagnostic reports without modifying code. |
 | **`guard-blast`** | `skills/guard-blast` | `/guard-blast <target>` | Guard (Safety) | Computes Blast Radius, locks down an Allowlist of editable files, and derives targeted Regression Matrices. |
 | **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Authoring) | Proves ACs live via Maestro MCP (`inspect_screen` + batched `run`), then freezes standalone semantic YAML flows validated by `validate-flow.py`. |
-| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` or CLI | Test (Execution) | High-volume suite runner with block-waiting live ANSI terminal, safe overlay triage, 1-read failure digests, and 0-token-bleed presets. |
+| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` or CLI | Test (Execution) | High-volume suite runner with block-waiting live ANSI terminal, safe overlay triage, 1-read failure digests, and flat-cost native CLI presets. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Orchestration) | Complete bug lifecycle orchestrator (Understand $\to$ Fix $\to$ Prove $\to$ Ship) with 3 human review gates. |
 | **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Orchestration) | Standalone sprint task orchestrator (Understand $\to$ Build $\to$ Prove $\to$ Ship) without an upfront contract. |
 | **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Multi-Task) | Single-chat multi-agent orchestrator with isolated worktrees and batched Gate approvals. |
@@ -319,21 +319,21 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 11 
 
 ---
 
-### 5.6. `test-author` — Maestro YAML Flow Author & Static Validator (Code-First ID Extraction)
-- **When to Use:** To author robust, deterministic Maestro UI flows from User Stories or reproduction steps using **Code-First ID Extraction** (scans XML `android:id` and Compose `Modifier.testTag` statically first at ~0 device token cost, falling back to `device.py nodes` only for Server-Driven UI or missing IDs).
+### 5.6. `test-author` — Maestro YAML Flow Author & Static Validator (Prove-First → Freeze)
+- **When to Use:** To prove acceptance criteria or bug reproductions live on a device first via Maestro MCP (`inspect_screen` + batched `run`), then freeze passing, standalone Maestro YAML flows to disk for repeatable native regression runs (with `extract-selectors.py` available as a static fallback when MCP is unavailable or a view lacks runtime IDs).
 - **Trigger / Command:**
   ```bash
-  # Step 1: Extract ACs from PLAN.md or flow-bug.md and author Maestro YAML flows
+  # Step 1: Prove ACs live via Maestro MCP and freeze standalone YAML flows
   /test-author plans/APP-8092/flow-bug.md --domain 02-checkout
 
-  # Optional CLI: Scan static XML/Compose selectors for a feature before authoring
+  # Optional static fallback CLI: Scan XML android:id, Compose testTag & strings.xml by keyword
   python3 skills/test-author/scripts/extract-selectors.py app/src/main -k "checkout"
 
   # Step 2: Statically validate authored flows (no coordinate taps, assertions present)
   python3 skills/test-author/scripts/validate-flow.py .maestro/APP-8092/
   ```
 - **Inputs:** Acceptance criteria, bug reproduction steps, or `PLAN.md` / `flow-bug.md`.
-- **Outputs:** Validated Maestro YAML test flow (e.g., `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) utilizing bare resource IDs, Compose `testTag`, or resolved text selectors, ready for one-shot execution via `suite-runner.py`.
+- **Outputs:** Validated, standalone Maestro YAML test flow (e.g., `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) utilizing bare resource IDs, Compose `testTag`, or verified text selectors, ready for repeatable CLI execution via `suite-runner.py`.
 
 ---
 
@@ -384,7 +384,7 @@ Below are the exact triggers, syntax, arguments, inputs, and outputs for all 11 
   python3 skills/test-runner/scripts/suite-runner.py .maestro/02-checkout/ -m step --install
   ```
 - **Inputs:** Test directory path, test YAML file, or markdown state file containing a test matrix.
-- **Outputs:** Live ANSI streaming terminal, `progress.log`, failure screenshots (`issues/`), and token usage summary.
+- **Outputs:** Live ANSI streaming terminal (block-wait), `progress.log`, 1-read failure digests (`debug/digest_*.md`), failure screenshots/reports (`issues/`), and token usage summary.
 
 ---
 
@@ -448,10 +448,10 @@ When running 2 autonomous AI Agents concurrently on a single Mac (e.g. Agent A f
 2. **Mac RAM Exhaustion (OOM Freezes):** If both agents invoke Gradle with default worker counts (CPU core count $\times 2 = 20+$ workers), macOS memory is rapidly exhausted, freezing the machine.
 3. **Missing Gitignored Configs in Worktrees:** Standard `git worktree add` only checks out tracked files, leaving out vital Android files (`local.properties`, `keystore.properties`, `google-services.json`, `.agents/`, `.claude/`), breaking Gradle builds and stripping agent skills.
 
-`android-agentic-sdlc` provides a comprehensive **0-Token Isolation Trinity**:
+`android-agentic-sdlc` provides a comprehensive **Native Isolation Trinity**:
 
-### 🛡️ 1. Zero-Token Android Worktree Initializer (`scripts/init-worktree.sh` — <0.2s)
-Generates an isolated workspace per ticket with zero LLM tokens:
+### 🛡️ 1. Native Android Worktree Initializer (`scripts/init-worktree.sh` — <0.2s)
+Generates an isolated workspace per ticket via a fast native shell script (<0.2s):
 ```bash
 ./scripts/init-worktree.sh PAY-101
 # or with a custom branch:
@@ -496,7 +496,7 @@ android-agentic-sdlc/
 ├── install.sh                    # 1-click installer for Antigravity, Gemini CLI, and Claude Code
 ├── scripts/
 │   ├── gradle-build.py           # OS-flock Gradle build semaphore wrapper for multi-worktree builds
-│   ├── init-worktree.sh          # Zero-token Android Worktree initializer script (<0.2s)
+│   ├── init-worktree.sh          # Native Android Worktree initializer script (<0.2s)
 │   └── init_worktree.py          # Cross-platform Python worktree initializer
 ├── hooks/
 │   ├── hooks.json                # PreToolUse lifecycle hook configuration

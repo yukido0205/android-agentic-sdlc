@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-extract-selectors.py — Fast, zero-device-token static selector extractor for Android (XML & Compose)
+extract-selectors.py — Fast static selector extractor for Android (XML & Compose)
 
 Scans Android source code to extract Maestro-ready selectors before touching a device:
 1. XML Layout / Menu IDs (`android:id="@+id/..."`) + associated tag & text/hint attributes

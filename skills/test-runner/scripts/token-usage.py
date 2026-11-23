@@ -308,7 +308,7 @@ def cmd_report(out, until=None):
         ]
         os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
         open(out, "w").write("\n".join(lines) + "\n")
-        print(f"0 calls · 0 tokens (native execution, zero LLM token bleed)\n→ {out}")
+        print(f"0 calls · 0 tokens (native execution)\n→ {out}")
         return
 
     all_cs = cs + sub_cs

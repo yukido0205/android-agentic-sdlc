@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/init_worktree.py — Zero-Token Android Worktree Initializer for Parallel Agent Sessions.
+"""scripts/init_worktree.py — Native Android Worktree Initializer for Parallel Agent Sessions.
 
 Automates the creation of git worktrees under `.worktrees/<TICKET>` and symlinks critical
 Android and Agent config files (local.properties, keystore.properties, google-services.json,
@@ -64,7 +64,7 @@ def symlink_item(src: pathlib.Path, dst: pathlib.Path, repo_root: pathlib.Path) 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Zero-Token Android Worktree Initializer for Parallel Agent Sessions")
+    parser = argparse.ArgumentParser(description="Native Android Worktree Initializer for Parallel Agent Sessions")
     parser.add_argument("ticket", help="Ticket identifier (e.g. PAY-101, PROJ-123, BUG-404)")
     parser.add_argument("-b", "--branch", help="Custom branch name (default: feature/<TICKET> or fix/<TICKET>)")
     parser.add_argument("--from-ref", dest="from_ref", default="HEAD", help="Base commit/branch reference (default: HEAD)")
@@ -151,7 +151,7 @@ def main() -> None:
     print(f"   • Ticket:         {ticket}")
     print(f"   • Branch:         {branch}")
     print("   • Build Wrapper:  scripts/gradle-build.py (OS flock + --max-workers=2)")
-    print("   • Zero-Token init completed in <0.2s")
+    print("   • Native init completed in <0.2s")
     print("=" * 70)
     print(f"👉 To begin work in this isolated workspace:")
     print(f"   cd \"{worktree_dir}\"")

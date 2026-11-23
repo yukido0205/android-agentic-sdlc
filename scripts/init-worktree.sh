@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/init-worktree.sh — Zero-Token Android Worktree Initializer
+# scripts/init-worktree.sh — Native Android Worktree Initializer
 #
 # Creates an isolated git worktree for parallel agent sessions (.worktrees/<TICKET>),
 # symlinks vital Android/Agent gitignored files (local.properties, keystore.properties,
@@ -32,7 +32,7 @@ CUSTOM_DIR=""
 usage() {
   local code="${1:-0}"
   cat <<EOF
-Zero-Token Android Worktree Initializer for Parallel Agent Sessions
+Native Android Worktree Initializer for Parallel Agent Sessions
 
 Usage:
   ./scripts/init-worktree.sh <TICKET> [options]
@@ -193,7 +193,7 @@ echo "✅ ANDROID WORKTREE READY: $WORKTREE_DIR"
 echo "   • Ticket:         $TICKET"
 echo "   • Branch:         $BRANCH"
 echo "   • Build Wrapper:  scripts/gradle-build.py (OS flock + --max-workers=2)"
-echo "   • Zero-Token init completed in <0.2s"
+echo "   • Native init completed in <0.2s"
 echo "======================================================================"
 echo "👉 To begin work in this isolated workspace:"
 echo "   cd \"$WORKTREE_DIR\""

@@ -38,9 +38,9 @@ The unified test automation system for Android development and QC:
 
 | Mode | Answers | Tool | Re-run cost |
 |---|---|---|---|
-| `behavior` (first pass) | Does it do what the PRD says? | `/test-author` (MCP Prove-First + Freeze) | Frozen to YAML for 0-token re-runs |
+| `behavior` (first pass) | Does it do what the PRD says? | `/test-author` (MCP Prove-First + Freeze) | Frozen to YAML for repeatable CLI re-runs |
 | `design` | Does it look like Figma? | `device.py check` — Figma numbers vs measured dp/colours | a table, only diffs need eyes |
-| `regression` / `step` | Do frozen flows still pass? | `suite-runner.py` — native CLI execution with live monitor | ~0 tokens |
+| `regression` / `step` | Do frozen flows still pass? | `suite-runner.py` — native CLI execution with live monitor | Flat overhead (no per-flow LLM calls) |
 
 ---
 
@@ -78,14 +78,14 @@ When running multiple agents in parallel on 1 Mac with 2+ Emulators:
      ```
    `suite-runner.py` acquires an exclusive mutex lock on an available emulator first, sets `ANDROID_SERIAL=<locked_device_id>`, installs the APK exclusively to that emulator, and runs tests in complete isolation.
 
-### ⛔ Strict Prohibitions (Zero Token Bleed & Live Terminal Enforcement):
+### ⛔ Strict Prohibitions (Low Token Overhead & Live Terminal Enforcement):
 - **DO NOT** pass `--headless` or `--no-terminal` unless the user **explicitly typed** `--headless`, `--no-terminal`, or `headless` in their prompt. By default, `suite-runner.py` opens the external macOS Terminal window (`--open-terminal`) for live visual monitoring and **block-waits** until completion (returning the child exit code and printing the final summary + failure digest paths directly).
 - **DO NOT** poll `progress.log` in a loop (set a generous command timeout such as 600s, or run in background with reactive wakeup for large suites).
 - **DO NOT** inspect screens (`inspect_screen` or `device.py nodes`) before running existing flows.
 - **DO NOT** execute manual `adb shell input tap` or `adb shell uiautomator dump` (and never call `uiautomator dump` while Maestro MCP is active — Maestro holds UiAutomation so it always fails).
 - **DO NOT** copy folders or rewrite `.yaml` flow files line by line.
 - **DO NOT** run individual flows through sequential MCP calls.
-Let `suite-runner.py` run natively. It handles execution, terminal streaming, failure digest generation, defect logging, and state reset with **0 token waste**.
+Let `suite-runner.py` run natively. It handles execution, terminal streaming, failure digest generation, defect logging, and state reset outside the LLM loop (keeping orchestration cost flat regardless of flow count).
 
 ### Only When `suite-runner.py` Completes (1-Read Debug Budget):
 - **If all tests PASS (✅):** Report the summary table printed by `suite-runner.py` and finish immediately. Do **not** run follow-up `adb` checks, preference reads, or codebase greps to re-verify setup/teardown steps that already executed in passing flows.
@@ -117,7 +117,7 @@ from an empty session, and make fewer calls. Output size matters far less.
 8. **Never use the cloud tools** (`run_on_cloud`, `list_cloud_devices`, …): they upload the app to an external service.
 9. **Load a reference only for the mode you are in** (`maestro-flow.md` / `design-spec.md`), and `issue-report-template.md` only once an app defect is confirmed.
 10. **Reuse before writing.** `_nav/<screen>.yaml` and `design/<screen>.tsv` that already exist are run, not rewritten. Rewrite only what a failure points at.
-11. **Batch runs (> 2 flows): always use `suite-runner.py`.** Never call MCP `run` sequentially in a loop for multiple flows; use `suite-runner.py` for speed, zero token cost, and real-time live monitoring.
+11. **Batch runs (> 2 flows): always use `suite-runner.py`.** Never call MCP `run` sequentially in a loop for multiple flows; use `suite-runner.py` for speed, flat orchestration token cost (no per-flow LLM calls), and real-time live monitoring.
 
 ---
 
@@ -200,7 +200,7 @@ Instead of remembering disparate flags, choose the preset matching your goal:
 ### What `suite-runner.py` handles automatically:
 1. **Configuration Transparency:** Prints `⚙️ SUITE CONFIGURATION` banner displaying active Mode, Terminal, Fail-Fast, and Filter.
 2. **Auto Token Tracking:** Automatically runs background token usage tracking and writes report upon suite completion.
-3. **Preflight Health Checks:** Verifies device connection, app package installation, required tokens, and GPS before running. Fails immediately with actionable instructions if anything is missing (0 token waste).
+3. **Preflight Health Checks:** Verifies device connection, app package installation, required tokens, and GPS before running. Fails immediately with actionable instructions if anything is missing (avoiding wasted test runs and debug turns).
 4. **Step Titles & Progress Streaming:** Automatically extracts semantic step names from folder paths (`03: Checkout Payment`, `Regression Suite`) and streams live progress.
 5. **Robust Pass/Fail Parsing:** Immune to runner logging crashes during exit. If assertions passed, it will not register a false FAIL.
 6. **Zero-Evidence-Loss Defect Logging & 1-Read Digest:** On failure, captures screenshot via ADB binary stream + device fallback, dumps UI hierarchy XML, slices logcat, generates a compact 1-read `debug/digest_<ac>_<ts>.md` (prioritized visible nodes + filtered logcat + flow YAML + `LIKELY_CAUSE`, PII-redacted), and writes `issues/NN-<slug>.md` (skipped on `BLOCKED_BY_OVERLAY`).

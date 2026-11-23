@@ -2,7 +2,7 @@
 """High-volume E2E test suite runner for Android Maestro flows.
 
 Designed for Dev & QC to execute large suites (~270 test cases) efficiently:
-- Native Maestro execution (fast, headless, 0 LLM token waste on passing tests)
+- Native Maestro execution (fast, no per-flow LLM calls — flat orchestration cost)
 - Preflight health checks (device online, package installed, tokens/env, GPS mock)
 - Real-time live console monitoring: `[n/total] AC-x: <title> - verified - m/total [time]`
 - Instant on-failure defect reporting (with screenshot, UI hierarchy, and logcat)

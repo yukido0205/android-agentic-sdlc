@@ -1,6 +1,6 @@
 ---
 name: test-author
-description: "Prove acceptance criteria on a live device first via Maestro MCP (inspect_screen + run), then freeze passing YAML flows to disk for zero-token regression. Enforces semantic domain directories (e.g., 01-order-list/), strict naming (ac-01-slug.yaml), standalone preconditions, selector best practices (id/text over coordinates), and project overlay registration (.maestro/_shared/popups.json). Use when testing ACs for the first time, creating new Maestro flows, or when test-runner reports missing flows."
+description: "Prove acceptance criteria on a live device first via Maestro MCP (inspect_screen + run), then freeze passing YAML flows to disk for flat-cost repeatable regression. Enforces semantic domain directories (e.g., 01-order-list/), strict naming (ac-01-slug.yaml), standalone preconditions, selector best practices (id/text over coordinates), and project overlay registration (.maestro/_shared/popups.json). Use when testing ACs for the first time, creating new Maestro flows, or when test-runner reports missing flows."
 argument-hint: "<step-file | <TICKET> | PRD/plan path> [--domain <folder-name>]"
 model: sonnet
 allowed-tools:
@@ -27,7 +27,7 @@ A dedicated skill for verifying acceptance criteria (ACs) on the first pass with
 > [!IMPORTANT]
 > **Separation of Concerns (Prove-First → Freeze-After):**
 > - **Authoring (`/test-author` — First Pass / New ACs):** Uses Maestro MCP (`inspect_screen` + `run`) to prove each AC live on the warm device, records any random app overlays into `.maestro/_shared/popups.json`, and **freezes** the passing YAML steps to disk at the end of the session (`validate-flow.py`).
-> - **Executing (`/test-runner` — Re-run / Regression / Gate 3):** Runs already-frozen suites via `suite-runner.py` in a fresh session with near-zero token cost. **Never** re-run `suite-runner.py` inside the same `/test-author` session if the ACs just passed via MCP.
+> - **Executing (`/test-runner` — Re-run / Regression / Gate 3):** Runs already-frozen suites via `suite-runner.py` in a fresh session at flat orchestration cost (independent of AC count). **Never** re-run `suite-runner.py` inside the same `/test-author` session if the ACs just passed via MCP.
 
 ---
 

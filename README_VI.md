@@ -25,7 +25,7 @@ Khi đưa các AI Agent thông thường vào dự án Android thực tế mà k
 ### 4 Triết Lý Kỹ Thuật Cốt Lõi (Core Design Pillars)
 
 1. **Vệ Sinh Ngữ Cảnh Bằng Quy Hoạch Cuốn Chiếu 3 Tầng (3-Tier JIT Slicing):** LLM sẽ suy giảm trí thông minh khi phải ôm đồm toàn bộ Epic trong một phiên làm việc. Hệ thống lưu trạng thái vào 2 file tinh gọn (`PLAN.md` & `CONTRACT.md`) và chủ động xóa sạch bộ nhớ phiên (`/clear`) giữa 3 chặng: **Lead chốt Contract $\to$ Chia khung Slice $\to$ Code từng Step**.
-2. **Thực Thi Cơ Học Tốn 0 Token (Zero-Token-Bleed Execution):** Không bao giờ dùng token LLM để làm công việc lặp lại của máy tính. Việc kiểm tra cú pháp tĩnh, chặn lỗi vi phạm kiến trúc (`<20ms`) và chạy hàng trăm kịch bản Maestro (~270 flows) đều được đẩy xuống script Python native.
+2. **Thực Thi Native Ngoài Vòng Lặp LLM (Chi Phí Token Phẳng):** Tách các tác vụ tất định ra khỏi vòng lặp gọi LLM theo từng bước. Việc kiểm tra cú pháp tĩnh, chốt chặn kiến trúc (`<20ms`) và chạy bộ kịch bản Maestro quy mô lớn được đẩy xuống script Python native—giữ chi phí điều phối LLM ở mức phẳng thay vì tăng tuyến tính theo từng flow/AC.
 3. **Chẩn Đoán Trước Khi Sửa & Khóa Vùng Ảnh Hưởng (Blast Radius Containment):** Tách bạch tuyệt đối giữa *Điều tra* và *Thay đổi code*. Agent không được phép sửa bất kỳ dòng code nào cho đến khi chứng minh được nguyên nhân gốc (`test-hunter`) và khóa xong danh sách file được phép sửa (`guard-blast`).
 4. **Con Người Duyệt Ở Đúng 3 Điểm Đòn Bẩy (High-Leverage Human Gates):** Thay vì làm phiền lập trình viên bằng hàng chục câu hỏi lặt vặt—hoặc tự ý chạy mù quáng từ đầu đến cuối—quy trình tự động dừng lại xin phê duyệt ở đúng **3 cổng quyết định rủi ro cao nhất** (*Duyệt Chẩn Đoán $\to$ Duyệt Tái Hiện Lỗi $\to$ Duyệt Bản Vá*).
 
@@ -41,7 +41,7 @@ flowchart LR
         R["rules/code-hygiene.md<br/>• Trước code: Lean SOLID<br/>• Trong code: Why-Only Docs<br/>• Sau code: YAGNI Simplify"]
     end
 
-    subgraph L2["🔒 Tầng 2: Chốt Chặn Cứng (<20ms, 0-Token Hook)"]
+    subgraph L2["🔒 Tầng 2: Chốt Chặn Cứng (<20ms Hook Cơ Học)"]
         H["hooks/pre-tool-guard.py<br/>• Chặn android.* trong /domain/<br/>• Chặn point: tap trong Maestro<br/>• Chặn maestro CLI thô & git --force"]
     end
 
@@ -59,7 +59,7 @@ Chất lượng code là nguyên tắc bất biến, không phải bước tùy 
 - **Sau khi code (YAGNI Simplify):** Làm phẳng câu lệnh điều kiện bằng guard clauses (early returns), xóa sạch `Log.d` tạm và cấm mở `public` chỉ để phục vụ unit test.
 
 ### 🔒 Tầng 2: Chốt Chặn Sự Kiện Trước Khi Gọi Công Cụ (`hooks/hooks.json` & `pre-tool-guard.py`) — *Kỷ Luật Cứng (Hard Gate)*
-LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python thì không. Chạy đồng bộ trong **<20ms** với **chi phí 0 token** ngay trước khi Agent gọi `write_file`, `edit_file` hoặc `run_command`:
+LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python thì không. Chạy đồng bộ trong **<20ms** ngoài vòng lặp LLM ngay trước khi Agent gọi `write_file`, `edit_file` hoặc `run_command`:
 - **`[domain-purity-guard]`:** Từ chối ngay lập tức (`deny`) nếu AI cố tình ghi/sửa file `.kt` trong thư mục `/domain/` mà có chứa `import android.*` hoặc `import androidx.*`.
 - **`[maestro-static-gate]`:** Từ chối (`deny`) ngay lúc lưu file `.maestro/**/*.yaml` nếu đặt sai tên chuẩn `ac-NN-<slug>.yaml`, dùng tọa độ chạm cứng (`point: x, y`), hoặc quên viết câu lệnh `assertVisible`/`assertTrue`.
 - **`[command-safety-guard]`:** Từ chối (`deny`) lệnh chạy `maestro test` thô trên terminal (bắt buộc đi qua `suite-runner.py` để chống tràn token) và bật hộp thoại xác nhận bắt buộc (`force_ask`) với các lệnh nguy hiểm (`git reset --hard`, `git push --force`, `adb uninstall`).
@@ -75,7 +75,7 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 | **`test-hunter`** | `skills/test-hunter` | `/test-hunter <ticket\|log>` | Test (Chẩn đoán) | Chuyên gia điều tra nguyên nhân gốc (chỉ đọc — không sửa code). Xuất báo cáo `DIAGNOSIS`. |
 | **`guard-blast`** | `skills/guard-blast` | `/guard-blast <target>` | Guard (An toàn) | Tính toán Blast Radius, khóa chặt danh sách file được sửa (Allowlist) và lập ma trận regression. |
 | **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Soạn thảo) | Prove AC trực tiếp trên máy qua Maestro MCP (`inspect_screen` + gom bước `run`), sau đó đóng băng thành YAML độc lập và kiểm tra bằng `validate-flow.py`. |
-| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test quy mô lớn, stream live ANSI kèm block-wait, phân loại overlay an toàn, xuất 1-read failure digest và 0 tốn token khi pass. |
+| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test quy mô lớn, stream live ANSI kèm block-wait, phân loại overlay an toàn, xuất 1-read failure digest và chi phí điều phối phẳng theo suite. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Nhạc trưởng) | Điều phối toàn diện vòng đời bug (Hiểu $\to$ Sửa $\to$ Chứng minh $\to$ Ship), người chỉ duyệt 3 cổng. |
 | **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Nhạc trưởng) | Điều phối trọn gói task tính năng/cải tiến lẻ giữa sprint không cần CONTRACT.md, chỉ duyệt 3 cổng. |
 | **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Đa Tác Vụ) | Điều phối nhiều task trên 1 chat với worktree cô lập và gom duyệt Gate tập trung. |
@@ -317,21 +317,21 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
 
 ---
 
-### 5.6. `test-author` — Tự Động Viết & Kiểm Tra Tĩnh Test Maestro YAML (Code-First ID Extraction)
-- **Khi nào sử dụng:** Tạo kịch bản kiểm thử giao diện Maestro E2E chuẩn xác dựa trên tiêu chí nghiệm thu của User Story hoặc luồng tái hiện lỗi theo quy trình **Code-First ID Extraction** (Tĩnh trước, Động là Fallback: ưu tiên đọc XML `android:id` và Compose `Modifier.testTag` trực tiếp từ source code nhanh gấp 10 lần và tốn ~0 token thiết bị; chỉ fallback sang `device.py nodes` khi gặp Server-Driven UI hoặc không có ID tĩnh).
+### 5.6. `test-author` — Tự Động Viết & Kiểm Tra Tĩnh Test Maestro YAML (Prove-First → Freeze)
+- **Khi nào sử dụng:** Prove tiêu chí nghiệm thu của User Story hoặc luồng tái hiện lỗi trực tiếp trên thiết bị trước bằng Maestro MCP (`inspect_screen` + gom bước `run`), sau đó đóng băng thành kịch bản Maestro YAML độc lập để chạy hồi quy lặp lại qua `suite-runner.py` (kèm `extract-selectors.py` làm fallback tĩnh khi không có MCP hoặc view thiếu runtime ID).
 - **Lệnh kích hoạt / Cú pháp:**
   ```bash
-  # Bước 1: Agent trích xuất AC từ PLAN.md hoặc flow-bug.md, quét ID từ code và tạo kịch bản Maestro YAML
+  # Bước 1: Prove AC trực tiếp qua Maestro MCP và đóng băng thành kịch bản Maestro YAML độc lập
   /test-author plans/APP-8092/flow-bug.md --domain 02-checkout
 
-  # CLI bổ trợ: Quét nhanh toàn bộ XML android:id, Compose testTag & strings.xml theo từ khóa
+  # CLI fallback tĩnh (tùy chọn): Quét nhanh XML android:id, Compose testTag & strings.xml theo từ khóa
   python3 skills/test-author/scripts/extract-selectors.py app/src/main -k "checkout"
 
   # Bước 2: Kiểm tra tĩnh (chặn bấm tọa độ, thiếu assert, sai tên file)
   python3 skills/test-author/scripts/validate-flow.py .maestro/APP-8092/
   ```
 - **Đầu vào:** Tiêu chí nghiệm thu (Given/When/Then) hoặc kịch bản tái hiện bug trong `PLAN.md` / `flow-bug.md`.
-- **Đầu ra:** File test Maestro YAML hoàn chỉnh (ví dụ: `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) sử dụng selector bare ID / Compose `testTag` / text bền vững, sẵn sàng giao cho `suite-runner.py` chạy CLI một mạch.
+- **Đầu ra:** File test Maestro YAML độc lập hoàn chỉnh (ví dụ: `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) sử dụng selector bare ID / Compose `testTag` / text đã kiểm chứng, sẵn sàng giao cho `suite-runner.py` chạy CLI lặp lại.
 
 ---
 
@@ -382,7 +382,7 @@ Nếu muốn tự copy hoặc tạo symlink thủ công, bạn chỉ cần đặ
   python3 skills/test-runner/scripts/suite-runner.py .maestro/02-checkout/ -m step --install
   ```
 - **Đầu vào:** Thư mục chứa kịch bản Maestro, file YAML đơn lẻ hoặc file trạng thái markdown chứa ma trận test.
-- **Đầu ra:** Cửa sổ Terminal stream ANSI trực tiếp, `progress.log`, thư mục báo cáo lỗi `issues/`, và thống kê token sử dụng.
+- **Đầu ra:** Cửa sổ Terminal stream ANSI trực tiếp (block-wait), `progress.log`, 1-read failure digest (`debug/digest_*.md`), thư mục báo cáo lỗi `issues/`, và thống kê token sử dụng.
 
 ---
 
@@ -446,10 +446,10 @@ Khi chạy 2 AI Agent độc lập cùng lúc trên 1 máy Mac (ví dụ: Agent 
 2. **Tràn RAM máy Mac (OOM Freeze):** Cả 2 Agent cùng gọi Gradle song song với số workers mặc định (thường bằng số core CPU, e.g. 10 workers $\times$ 2 = 20 Gradle workers) sẽ ngốn sạch 32GB/64GB RAM khiến macOS bị đứng hình (freeze).
 3. **Mất config sống còn khi dùng Git Worktree:** `git worktree add` chỉ checkout code được track; các file `.gitignore` sống còn (`local.properties`, `keystore.properties`, `google-services.json`, `.agents/`, `.claude/`) bị bỏ rơi khiến Gradle build lỗi thiếu SDK và Agent mất toàn bộ bộ skill/hook.
 
-`android-agentic-sdlc` giải quyết triệt để bài toán này bằng **Bộ ba cơ chế cô lập tự động (0-Token Isolation Trinity)**:
+`android-agentic-sdlc` giải quyết triệt để bài toán này bằng **Bộ ba cơ chế cô lập native (Native Isolation Trinity)**:
 
-### 🛡️ 1. Script Khởi Tạo Worktree Chuẩn Android (`scripts/init-worktree.sh` — 0-Token, <0.2s)
-Tự động dựng workspace độc lập cho từng ticket mà không tốn bất kỳ 1 token LLM nào:
+### 🛡️ 1. Script Khởi Tạo Worktree Chuẩn Android (`scripts/init-worktree.sh` — <0.2s)
+Tự động dựng workspace độc lập cho từng ticket bằng script shell native tốc độ cao (<0.2s):
 ```bash
 ./scripts/init-worktree.sh PAY-101
 # hoặc chỉ định branch riêng:
@@ -494,7 +494,7 @@ android-agentic-sdlc/
 ├── install.sh                    # Script cài đặt 1 chạm cho Antigravity, Gemini CLI & Claude Code
 ├── scripts/
 │   ├── gradle-build.py           # Wrapper khóa build Gradle bằng OS flock cho nhiều worktree
-│   ├── init-worktree.sh          # Script khởi tạo Android Worktree chuẩn, 0-token (<0.2s)
+│   ├── init-worktree.sh          # Script khởi tạo Android Worktree native (<0.2s)
 │   └── init_worktree.py          # Bản Python cross-platform của bộ khởi tạo worktree
 ├── hooks/
 │   ├── hooks.json                # Cấu hình PreToolUse lifecycle hook
