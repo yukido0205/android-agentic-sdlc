@@ -431,11 +431,46 @@ def format_semantic_name(raw_name):
     return cleaned.title()
 
 
+METADATA_COMMENT_RE = re.compile(
+    r"^(?:preconditions?|target\s*app|appid|source|setup|requires|needs|note|prd|author|helper|see|ref)\s*:",
+    re.IGNORECASE,
+)
+
+
+def _extract_yaml_frontmatter_name(lines: list[str]) -> str:
+    """Extracts the Maestro YAML frontmatter `name:` scalar before the first `---`."""
+    in_frontmatter = True
+    for idx, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if stripped == "---":
+            if idx == 0:
+                continue
+            break
+        if not in_frontmatter or not stripped or stripped.startswith("#"):
+            continue
+        m_name = re.match(r"^\s*name\s*:\s*(.+?)\s*$", raw_line)
+        if not m_name:
+            continue
+        val = m_name.group(1).strip()
+        if not val:
+            return ""
+        if val[0] in ('"', "'"):
+            quote = val[0]
+            end_q = val.find(quote, 1)
+            while end_q > 0 and quote == '"' and val[end_q - 1] == "\\":
+                end_q = val.find(quote, end_q + 1)
+            if end_q > 1:
+                return val[1:end_q].strip()
+            return val.strip(quote).strip()
+        return re.sub(r"\s+#.*$", "", val).strip()
+    return ""
+
+
 def parse_flow_metadata(yaml_path):
-    """Extracts AC code, title, step title, and tags from YAML comments and path.
+    """Extracts AC code, title, step title, and tags from YAML frontmatter, comments, and path.
     
     Supports both semantic naming (e.g. 03-checkout-payment/ac-01-submit-disabled.yaml)
-    and legacy formats (e.g. s3/ac-1.yaml).
+    and legacy formats (e.g. s3/ac-1.yaml). Prioritizes YAML `name:` over comments.
     """
     ac_code = ""
     title = ""
@@ -498,12 +533,16 @@ def parse_flow_metadata(yaml_path):
         if not re.match(r"^[A-Z]+-\d+$", part, re.IGNORECASE) and not part.startswith("26"):
             step_title = format_semantic_name(part)
 
-    # 3. Read YAML header comments for explicit AC, title, or tags
+    # 3. Read YAML frontmatter (`name:`) and header comments for explicit AC, title, or tags
     try:
         with open(yaml_path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()[:25]
+            lines = f.readlines()[:40]
     except Exception:
         lines = []
+
+    yaml_name = _extract_yaml_frontmatter_name(lines)
+    comment_explicit_title = ""
+    comment_fallback_title = ""
 
     for line in lines:
         line_clean = line.strip()
@@ -529,21 +568,40 @@ def parse_flow_metadata(yaml_path):
         ac_match = re.search(r"((?:AC|R)-\d+)\s*[:—\-]\s*(.+)", comment, re.IGNORECASE)
         if ac_match:
             ac_code = ac_match.group(1).upper()
-            title = ac_match.group(2).strip()
+            if not comment_explicit_title:
+                comment_explicit_title = ac_match.group(2).strip()
             continue
 
         # General Title: ...
         if comment.lower().startswith("title:"):
-            title = comment[6:].strip()
+            if not comment_explicit_title:
+                comment_explicit_title = comment[6:].strip()
             continue
 
-        if not title and len(comment) > 3 and not comment.startswith("@") and not comment.lower().startswith("step"):
-            # Avoid using file headers that are purely instructions
-            if not re.match(r"^[a-z]+-\d+", comment.lower()) and not comment.lower().startswith("needs:"):
-                title = comment
+        if (
+            not comment_fallback_title
+            and len(comment) > 3
+            and not comment.startswith("@")
+            and not comment.lower().startswith("step")
+            and not METADATA_COMMENT_RE.match(comment)
+            and not re.match(r"^[a-z]+-\d+", comment.lower())
+        ):
+            comment_fallback_title = comment
 
-    if not title:
-        title = fallback_title or base
+    if yaml_name:
+        m_yn = re.match(r"^((?:AC|R)[-_]?\d+)\s*(?:[:—\-]+\s*|\s+)(.+)$", yaml_name, re.IGNORECASE)
+        if m_yn:
+            title = m_yn.group(2).strip()
+        else:
+            title = yaml_name
+    elif comment_explicit_title:
+        title = comment_explicit_title
+    elif fallback_title:
+        title = fallback_title
+    elif comment_fallback_title:
+        title = comment_fallback_title
+    else:
+        title = base
         
     return {
         "ac": ac_code,
@@ -1484,6 +1542,240 @@ def _wait_for_terminal_child(
     return rc, result_text, True
 
 
+def _recompute_checkpoint_counts(checkpoint_data: dict, active_paths: set[str]) -> tuple[int, int]:
+    """Recomputes (passed, failed) accurately from completed entries for the active flows."""
+    completed = checkpoint_data.get("completed") or {}
+    passed = sum(1 for p in active_paths if completed.get(p, {}).get("status") == "PASSED")
+    failed = sum(1 for p in active_paths if completed.get(p, {}).get("status") == "FAILED")
+    checkpoint_data["passed"] = passed
+    checkpoint_data["failed"] = failed
+    return passed, failed
+
+
+def _build_terminal_launcher(
+    device_id: str,
+    target_str: str,
+    child_cmd: str,
+    cwd: str,
+    wait_for_child: bool,
+) -> tuple[str, str, str, str]:
+    """Writes a short-path launcher script in /tmp to bypass macOS 1024-byte MAX_CANON PTY limits."""
+    run_time = dt.datetime.now().strftime("%H:%M:%S")
+    divider = "═" * 70
+    monitor_title = f"Test Monitor [{device_id}]"
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        dir="/tmp",
+        prefix="sr-monitor-",
+        suffix=".sh",
+        delete=False,
+        encoding="utf-8",
+    ) as tf:
+        launcher_path = tf.name
+        sentinel_path = f"{launcher_path}.done"
+        pid_path = f"{launcher_path}.pid"
+        result_path = f"{launcher_path}.result"
+        tf.write("#!/usr/bin/env bash\n")
+        if wait_for_child:
+            tf.write(f"SENTINEL={shlex.quote(sentinel_path)}\n")
+            tf.write(f"PIDFILE={shlex.quote(pid_path)}\n")
+            tf.write("CHILD_RC=130\n")
+            tf.write("_cleanup() {\n")
+            tf.write("  local rc=$?\n")
+            tf.write('  if [ ! -f "$SENTINEL" ]; then\n')
+            tf.write('    printf \'%s\\n\' "${CHILD_RC:-$rc}" > "$SENTINEL"\n')
+            tf.write("  fi\n")
+            tf.write(f'  rm -f {shlex.quote(launcher_path)} "$PIDFILE"\n')
+            tf.write("}\n")
+            tf.write("trap '_cleanup' EXIT INT TERM HUP\n")
+            tf.write('echo $$ > "$PIDFILE"\n')
+        else:
+            tf.write(f"trap 'rm -f {shlex.quote(launcher_path)}' EXIT\n")
+        tf.write(f"printf '\\033]0;%s\\007' {shlex.quote(monitor_title)}\n")
+        tf.write("clear\n")
+        tf.write(
+            "printf '\\033[1;36m%s\\n🔄 [%s] E2E RUN (%s): %s\\n%s\\033[0m\\n\\n' "
+            f"{shlex.quote(divider)} {shlex.quote(run_time)} {shlex.quote(device_id)} "
+            f"{shlex.quote(target_str)} {shlex.quote(divider)}\n"
+        )
+        if wait_for_child:
+            tf.write(f"export MAESTRO_SUITE_RESULT_FILE={shlex.quote(result_path)}\n")
+        tf.write(f"export MAESTRO_LOCK_PARENT_PID={os.getpid()}\n")
+        tf.write("export MAESTRO_TOKEN_MARK_INHERITED=1\n")
+        tf.write(f"export ANDROID_SERIAL={shlex.quote(device_id)}\n")
+        tf.write(f'export PATH={shlex.quote(f"{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}")}:"$PATH"\n')
+        tf.write(f"cd {shlex.quote(cwd)} || {{ CHILD_RC=1; exit 1; }}\n")
+        tf.write(f"{child_cmd}\n")
+        if wait_for_child:
+            tf.write("CHILD_RC=$?\n")
+            tf.write('printf \'%s\\n\' "$CHILD_RC" > "$SENTINEL"\n')
+            tf.write('exit "$CHILD_RC"\n')
+    os.chmod(launcher_path, 0o700)
+    return launcher_path, sentinel_path, pid_path, result_path
+
+
+def _dispatch_terminal_osascript(
+    monitor_title: str,
+    escaped_cmd: str,
+    force_new_term: bool,
+    term_program: str,
+) -> bool:
+    """Dispatches launcher command to iTerm2 or macOS Terminal.app."""
+    force_new_str = "true" if force_new_term else "false"
+    launched = False
+
+    if "iterm" in term_program:
+        iterm_script = f'''
+        tell application "iTerm"
+            activate
+            set targetSession to missing value
+            if not {force_new_str} then
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        repeat with s in sessions of t
+                            try
+                                if name of s contains "{monitor_title}" or name of w contains "{monitor_title}" then
+                                    set targetSession to s
+                                    select w
+                                    select t
+                                    select s
+                                    exit repeat
+                                end if
+                            end try
+                        end repeat
+                        if targetSession is not missing value then exit repeat
+                    end repeat
+                    if targetSession is not missing value then exit repeat
+                end repeat
+            end if
+
+            if targetSession is not missing value then
+                tell targetSession
+                    write text "{escaped_cmd}"
+                end tell
+            else
+                set newWindow to (create window with default profile)
+                tell current session of newWindow
+                    write text "{escaped_cmd}"
+                end tell
+            end if
+        end tell
+        '''
+        try:
+            subprocess.run(["osascript", "-e", iterm_script], check=True)
+            launched = True
+        except Exception:
+            launched = False
+
+    if not launched:
+        terminal_script = f'''
+        tell application "Terminal"
+            activate
+            set targetTab to missing value
+            if not {force_new_str} then
+                repeat with w in windows
+                    try
+                        if name of w contains "{monitor_title}" and not (busy of selected tab of w) then
+                            set targetTab to selected tab of w
+                            set index of w to 1
+                            exit repeat
+                        end if
+                    end try
+                end repeat
+            end if
+
+            if targetTab is not missing value then
+                do script "{escaped_cmd}" in targetTab
+            else
+                do script "{escaped_cmd}"
+            end if
+        end tell
+        '''
+        try:
+            subprocess.run(["osascript", "-e", terminal_script], check=True)
+            launched = True
+        except Exception as e:
+            print(f"Warning: Could not launch Terminal window ({e}). Running in current process instead...")
+
+    return launched
+
+
+def _launch_and_wait_terminal(
+    device_id: str,
+    target_str: str,
+    child_cmd: str,
+    cwd: str,
+    wait_for_child: bool,
+    prefer_new_terminal: bool,
+    wait_timeout: float,
+    startup_grace_s: float = 20.0,
+) -> tuple[bool, int, str, bool]:
+    """Launches external Terminal monitor with automatic 1-time new-window retry if startup grace expires.
+
+    Returns (launched, exit_code, result_text, child_started).
+    """
+    monitor_title = f"Test Monitor [{device_id}]"
+    term_program = os.environ.get("TERM_PROGRAM", "").lower()
+
+    for attempt in range(2):
+        force_new = prefer_new_terminal or (attempt > 0)
+        launcher_path, sentinel_path, pid_path, result_path = _build_terminal_launcher(
+            device_id,
+            target_str,
+            child_cmd,
+            cwd,
+            wait_for_child,
+        )
+        launch_cmd = f"bash {shlex.quote(launcher_path)}"
+        escaped_cmd = launch_cmd.replace("\\", "\\\\").replace('"', '\\"')
+        launched = _dispatch_terminal_osascript(monitor_title, escaped_cmd, force_new, term_program)
+
+        if not launched:
+            for p_tmp in (launcher_path, sentinel_path, pid_path, result_path):
+                try:
+                    os.unlink(p_tmp)
+                except OSError:
+                    pass
+            return False, 0, "", False
+
+        reused_str = "reused existing" if not force_new else "new window"
+        print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str}) [{monitor_title}]!", flush=True)
+        print(f"👉 Command executing: {child_cmd}", flush=True)
+        if not wait_for_child:
+            print("⏳ Tests are now running live in the external Terminal window (--no-wait).", flush=True)
+            print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.", flush=True)
+            return True, 0, "", False
+
+        print("⏳ Waiting for external Terminal run to finish (do not poll progress.log)...", flush=True)
+        child_rc, result_text, child_started = _wait_for_terminal_child(
+            sentinel_path,
+            pid_path,
+            result_path,
+            timeout_s=wait_timeout,
+            startup_grace_s=startup_grace_s,
+        )
+        for p_tmp in (sentinel_path, pid_path, result_path):
+            try:
+                os.unlink(p_tmp)
+            except OSError:
+                pass
+        if not child_started:
+            # Unlink launcher_path so a late/stalled old tab cannot start a duplicate child
+            try:
+                os.unlink(launcher_path)
+            except OSError:
+                pass
+            if attempt == 0:
+                print(
+                    "🔄 External Terminal tab did not start within startup grace period; retrying once in a new window...",
+                    flush=True,
+                )
+                continue
+        return True, child_rc, result_text, child_started
+
+    return False, 1, "", False
+
+
 def _user_requested_headless():
     """Returns True if the user's latest chat prompt explicitly requested --headless / --no-terminal,
     False if the user prompt did not request it, or None if no session transcript is active."""
@@ -1790,173 +2082,24 @@ def main():
         cwd = os.getcwd()
         quoted_args = " ".join(shlex.quote(a) for a in remaining_args)
         child_cmd = f"python3 {shlex.quote(script_path)} {quoted_args}"
-
-        # Write the banner, exports, cd, and python3 command to a short-path launcher script
-        # in /tmp so Terminal's `do script` stays well under macOS's 1024-byte MAX_CANON PTY
-        # input buffer limit (which otherwise truncates long worktree paths/banners before Enter).
-        run_time = dt.datetime.now().strftime("%H:%M:%S")
-        divider = "═" * 70
-        monitor_title = f"Test Monitor [{device_id}]"
         wait_for_child = not args.no_wait
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir="/tmp",
-            prefix="sr-monitor-",
-            suffix=".sh",
-            delete=False,
-            encoding="utf-8",
-        ) as tf:
-            launcher_path = tf.name
-            sentinel_path = f"{launcher_path}.done"
-            pid_path = f"{launcher_path}.pid"
-            result_path = f"{launcher_path}.result"
-            tf.write("#!/usr/bin/env bash\n")
-            if wait_for_child:
-                tf.write(f"SENTINEL={shlex.quote(sentinel_path)}\n")
-                tf.write(f"PIDFILE={shlex.quote(pid_path)}\n")
-                tf.write("CHILD_RC=130\n")
-                tf.write("_cleanup() {\n")
-                tf.write("  local rc=$?\n")
-                tf.write('  if [ ! -f "$SENTINEL" ]; then\n')
-                tf.write('    printf \'%s\\n\' "${CHILD_RC:-$rc}" > "$SENTINEL"\n')
-                tf.write("  fi\n")
-                tf.write(f'  rm -f {shlex.quote(launcher_path)} "$PIDFILE"\n')
-                tf.write("}\n")
-                tf.write("trap '_cleanup' EXIT INT TERM HUP\n")
-                tf.write('echo $$ > "$PIDFILE"\n')
-            else:
-                tf.write(f"trap 'rm -f {shlex.quote(launcher_path)}' EXIT\n")
-            tf.write(f"printf '\\033]0;%s\\007' {shlex.quote(monitor_title)}\n")
-            tf.write("clear\n")
-            tf.write(
-                "printf '\\033[1;36m%s\\n🔄 [%s] E2E RUN (%s): %s\\n%s\\033[0m\\n\\n' "
-                f"{shlex.quote(divider)} {shlex.quote(run_time)} {shlex.quote(device_id)} "
-                f"{shlex.quote(str(args.target))} {shlex.quote(divider)}\n"
-            )
-            if wait_for_child:
-                tf.write(f"export MAESTRO_SUITE_RESULT_FILE={shlex.quote(result_path)}\n")
-            tf.write(f"export MAESTRO_LOCK_PARENT_PID={os.getpid()}\n")
-            tf.write("export MAESTRO_TOKEN_MARK_INHERITED=1\n")
-            tf.write(f"export ANDROID_SERIAL={shlex.quote(device_id)}\n")
-            tf.write(f'export PATH={shlex.quote(f"{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}")}:"$PATH"\n')
-            tf.write(f"cd {shlex.quote(cwd)} || {{ CHILD_RC=1; exit 1; }}\n")
-            tf.write(f"{child_cmd}\n")
-            if wait_for_child:
-                tf.write("CHILD_RC=$?\n")
-                tf.write('printf \'%s\\n\' "$CHILD_RC" > "$SENTINEL"\n')
-                tf.write('exit "$CHILD_RC"\n')
-        os.chmod(launcher_path, 0o700)
+        wait_timeout = float(os.environ.get("SUITE_RUNNER_WAIT_TIMEOUT", "3600"))
+        startup_grace = float(os.environ.get("SUITE_RUNNER_STARTUP_GRACE", "20.0"))
 
-        launch_cmd = f"bash {shlex.quote(launcher_path)}"
-
-        # Support iTerm2 or macOS Terminal.app based on active environment
-        term_program = os.environ.get("TERM_PROGRAM", "").lower()
-        launched = False
-        force_new_term = "true" if args.new_terminal else "false"
-        escaped_cmd = launch_cmd.replace('\\', '\\\\').replace('"', '\\"')
-
-        if "iterm" in term_program:
-            iterm_script = f'''
-            tell application "iTerm"
-                activate
-                set targetSession to missing value
-                if not {force_new_term} then
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            repeat with s in sessions of t
-                                try
-                                    if name of s contains "{monitor_title}" or name of w contains "{monitor_title}" then
-                                        set targetSession to s
-                                        select w
-                                        select t
-                                        select s
-                                        exit repeat
-                                    end if
-                                end try
-                            end repeat
-                            if targetSession is not missing value then exit repeat
-                        end repeat
-                        if targetSession is not missing value then exit repeat
-                    end repeat
-                end if
-
-                if targetSession is not missing value then
-                    tell targetSession
-                        write text "{escaped_cmd}"
-                    end tell
-                else
-                    set newWindow to (create window with default profile)
-                    tell current session of newWindow
-                        write text "{escaped_cmd}"
-                    end tell
-                end if
-            end tell
-            '''
-            try:
-                subprocess.run(["osascript", "-e", iterm_script], check=True)
-                launched = True
-            except Exception:
-                launched = False
-
-        if not launched:
-            terminal_script = f'''
-            tell application "Terminal"
-                activate
-                set targetTab to missing value
-                if not {force_new_term} then
-                    repeat with w in windows
-                        try
-                            if name of w contains "{monitor_title}" and not (busy of selected tab of w) then
-                                set targetTab to selected tab of w
-                                set index of w to 1
-                                exit repeat
-                            end if
-                        end try
-                    end repeat
-                end if
-
-                if targetTab is not missing value then
-                    do script "{escaped_cmd}" in targetTab
-                else
-                    do script "{escaped_cmd}"
-                end if
-            end tell
-            '''
-            try:
-                subprocess.run(["osascript", "-e", terminal_script], check=True)
-                launched = True
-            except Exception as e:
-                print(f"Warning: Could not launch Terminal window ({e}). Running in current process instead...")
-
-        if not launched:
-            for p_tmp in (launcher_path, sentinel_path, pid_path, result_path):
-                try:
-                    os.unlink(p_tmp)
-                except OSError:
-                    pass
-        else:
+        launched, child_rc, result_text, child_started = _launch_and_wait_terminal(
+            device_id=device_id,
+            target_str=str(args.target),
+            child_cmd=child_cmd,
+            cwd=cwd,
+            wait_for_child=wait_for_child,
+            prefer_new_terminal=args.new_terminal,
+            wait_timeout=wait_timeout,
+            startup_grace_s=startup_grace,
+        )
+        if launched:
             lock_handed_off = True
-            reused_str = "reused existing" if not args.new_terminal else "new window"
-            print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str}) [{monitor_title}]!", flush=True)
-            print(f"👉 Command executing: {child_cmd}", flush=True)
             if not wait_for_child:
-                print("⏳ Tests are now running live in the external Terminal window (--no-wait).", flush=True)
-                print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.", flush=True)
                 return 0
-
-            print("⏳ Waiting for external Terminal run to finish (do not poll progress.log)...", flush=True)
-            wait_timeout = float(os.environ.get("SUITE_RUNNER_WAIT_TIMEOUT", "3600"))
-            child_rc, result_text, child_started = _wait_for_terminal_child(
-                sentinel_path,
-                pid_path,
-                result_path,
-                timeout_s=wait_timeout,
-            )
-            for p_tmp in (sentinel_path, pid_path, result_path):
-                try:
-                    os.unlink(p_tmp)
-                except OSError:
-                    pass
             # release_device_lock only unlinks if the lock is still owned by THIS parent PID
             # (safe no-op when the child already took over and released it; cleans up if child died early).
             if enable_lock:
@@ -1999,9 +2142,10 @@ def main():
         except Exception as e:
             print(f"Warning: could not read checkpoint ({e}), starting clean.")
 
+    active_paths = {f["path"] for f in flows}
     total = len(flows)
-    verified_count = checkpoint_data.get("passed", 0)
-    failed_count = checkpoint_data.get("failed", 0)
+    verified_count, failed_count = _recompute_checkpoint_counts(checkpoint_data, active_paths)
+    session_failed_count = 0
 
     print("=" * 70)
     print(f"🚀 E2E SUITE RUNNER: {total} flows loaded on [{device_id}]")
@@ -2029,6 +2173,11 @@ def main():
     C_DIM = "\033[2m" if is_tty else ""
 
     popup_rules = load_popup_rules(target_str)
+    rule_names = ", ".join(r.get("name", "unnamed") for r in popup_rules)
+    overlay_init_line = f"🛡️ Overlay rules active ({len(popup_rules)}): {rule_names}"
+    print(overlay_init_line, flush=True)
+    with open(progress_log, "a", encoding="utf-8") as f:
+        f.write(f"{overlay_init_line}\n")
 
     try:
         for idx, flow in enumerate(flows, start=1):
@@ -2076,6 +2225,7 @@ def main():
             # Safe overlay recovery + 1 warm retry (never force-stops on retry so session-seen flags stay intact)
             artifacts = None
             dismiss_note = ""
+            dismissed_rule = ""
             if not run_res["passed"]:
                 artifacts = capture_failure_artifacts(device_id, debug_dir, ac)
                 dismissed, rule_name = try_dismiss_overlay(
@@ -2088,7 +2238,11 @@ def main():
                     ac,
                 )
                 if dismissed:
-                    print(f"\n          🔄 Dismissed overlay [{rule_name}], warm-retrying {ac}...", flush=True)
+                    dismissed_rule = rule_name
+                    overlay_log = f"          🔄 Dismissed overlay [rule={rule_name}], warm-retrying {ac}..."
+                    print(f"\n{overlay_log}", flush=True)
+                    with open(progress_log, "a", encoding="utf-8") as f:
+                        f.write(f"{overlay_log}\n")
                     retry_res = run_maestro_flow(maestro_bin, device_id, flow_path, debug_dir)
                     duration_s += int(round(retry_res["duration"]))
                     run_res = retry_res
@@ -2097,7 +2251,18 @@ def main():
                         artifacts = None
 
             if run_res["passed"]:
-                verified_count += 1
+                cp_entry = {
+                    "status": "PASSED",
+                    "step": current_step,
+                    "ac": ac,
+                    "title": title,
+                    "duration": duration_s,
+                }
+                if dismissed_rule:
+                    cp_entry["overlay_dismissed"] = dismissed_rule
+                checkpoint_data.setdefault("completed", {})[flow_path] = cp_entry
+                verified_count, failed_count = _recompute_checkpoint_counts(checkpoint_data, active_paths)
+
                 warn_extra = f" {run_res['warning']}" if run_res.get("warning") else ""
                 note_extra = f" {dismiss_note}" if dismiss_note else ""
                 log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ✅ {ac}: {title} - verified - {verified_count}/{total} [{duration_s}s]{warn_extra}{note_extra}"
@@ -2105,16 +2270,8 @@ def main():
                     print(f"{CLR_LINE}{C_GREEN}{log_line}{C_RESET}", flush=True)
                 else:
                     print(f"{log_line}", flush=True)
-                checkpoint_data.setdefault("completed", {})[flow_path] = {
-                    "status": "PASSED",
-                    "step": current_step,
-                    "ac": ac,
-                    "title": title,
-                    "duration": duration_s,
-                }
-                checkpoint_data["passed"] = verified_count
             else:
-                failed_count += 1
+                session_failed_count += 1
                 if artifacts is None:
                     artifacts = capture_failure_artifacts(device_id, debug_dir, ac)
 
@@ -2138,7 +2295,8 @@ def main():
                 if digest_path:
                     artifacts["digest"] = digest_path
 
-                log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ❌ {ac}: {title} - FAILED [{likely_cause}] [{duration_s}s]"
+                note_extra = f" {dismiss_note}" if dismiss_note else ""
+                log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ❌ {ac}: {title} - FAILED [{likely_cause}] [{duration_s}s]{note_extra}"
                 if is_tty:
                     print(f"{CLR_LINE}{C_RED}{log_line}{C_RESET}", flush=True)
                 else:
@@ -2147,6 +2305,8 @@ def main():
                 print(f"          ├── 🔎 Likely Cause: {likely_cause}")
                 for ev in evidence_lines:
                     print(f"          ├── {ev}")
+                if dismissed_rule:
+                    print(f"          ├── 🛡️ Overlay Dismissed Before Retry: {dismissed_rule}")
                 if digest_path:
                     print(f"          ├── 📄 Digest (1-read): {digest_path}")
                 if artifacts.get("screenshot"):
@@ -2180,10 +2340,12 @@ def main():
                     "duration": duration_s,
                     "evidence": artifacts,
                 }
+                if dismissed_rule:
+                    cp_entry["overlay_dismissed"] = dismissed_rule
                 if issue_path:
                     cp_entry["issue"] = issue_path
                 checkpoint_data.setdefault("completed", {})[flow_path] = cp_entry
-                checkpoint_data["failed"] = failed_count
+                verified_count, failed_count = _recompute_checkpoint_counts(checkpoint_data, active_paths)
 
             # Append to progress log
             with open(progress_log, "a", encoding="utf-8") as f:
@@ -2193,10 +2355,10 @@ def main():
             with open(checkpoint_file, "w", encoding="utf-8") as f:
                 json.dump(checkpoint_data, f, indent=2)
 
-            # Check fail-fast condition
-            if args.fail_fast and failed_count >= args.fail_fast:
+            # Check fail-fast condition against failures observed in this session
+            if args.fail_fast and session_failed_count >= args.fail_fast:
                 print("\n" + "!" * 70)
-                print(f"🛑 Fail-fast threshold reached ({failed_count} failure(s)). Stopping suite early.")
+                print(f"🛑 Fail-fast threshold reached ({session_failed_count} failure(s)). Stopping suite early.")
                 print("!" * 70)
                 break
     except KeyboardInterrupt:
@@ -2230,9 +2392,13 @@ def main():
         f.write("| Step | AC | Title | Result | Duration | Evidence / Issue |\n")
         f.write("|---|---|---|---|---|---|\n")
         for p, d in checkpoint_data.get("completed", {}).items():
+            if active_paths and p not in active_paths:
+                continue
             status_icon = "✅ Passed" if d["status"] == "PASSED" else "❌ FAILED"
             step_col = d.get("step") or "—"
             issue_link = f"[{os.path.basename(d['issue'])}]({d['issue']})" if "issue" in d else f"`{os.path.basename(p)}`"
+            if d.get("overlay_dismissed"):
+                issue_link += f" (overlay: `{d['overlay_dismissed']}`)"
             f.write(f"| {step_col} | {d['ac']} | {d['title']} | {status_icon} | {d['duration']}s | {issue_link} |\n")
     
     print(f"📊 Summary report: {summary_md_path}")
