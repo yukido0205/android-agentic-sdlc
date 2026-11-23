@@ -88,7 +88,7 @@ When running multiple agents in parallel on 1 Mac with 2+ Emulators:
 Let `suite-runner.py` run natively. It handles execution, terminal streaming, failure digest generation, defect logging, and state reset with **0 token waste**.
 
 ### Only When `suite-runner.py` Completes (1-Read Debug Budget):
-- **If all tests PASS (✅):** Report the summary table printed by `suite-runner.py` and finish immediately.
+- **If all tests PASS (✅):** Report the summary table printed by `suite-runner.py` and finish immediately. Do **not** run follow-up `adb` checks, preference reads, or codebase greps to re-verify setup/teardown steps that already executed in passing flows.
 - **If a test FAILS (❌):** Read the single-file **`debug/digest_<ac>_<ts>.md`** first (printed in stdout and linked inside `issues/NN-<slug>.md`) — it already contains `LIKELY_CAUSE`, focus window, Maestro error, failing flow YAML, prioritized visible UI nodes, and filtered logcat. Do **not** separately read raw `hierarchy.xml` + `logcat.txt` + `.yaml` unless the digest is missing an element.
   - **`BLOCKED_BY_OVERLAY`:** Runner detected a random app/system overlay (user guide, promo, rating, etc.) and skipped creating a false bug report. Use **at most 1–2 MCP calls** (`inspect_screen` once → dismiss), add a specific rule (`when_visible` + `actions`) to `.maestro/_shared/popups.json`, and resume with `suite-runner.py <target> --resume --no-reset`.
   - **`SELECTOR_NOT_FOUND`:** Check the digest's visible UI nodes first; if live confirmation is needed, use **at most 1–2 MCP calls** (`inspect_screen`), update the YAML selector, and resume with `--resume --no-reset` (or `--resume`).
@@ -128,8 +128,8 @@ from an empty session, and make fewer calls. Output size matters far less.
   If it prints `WARNING: old session`, keep going, and put that line first in the output's Tokens section.
 
 Then, in this order:
-1. `~/Library/Android/sdk/platform-tools/adb devices` shows exactly one device.
-2. App built from this branch: `./gradlew <installDebugTask> | tail -3` (auto-detect variant from `app/build.gradle*`, default `:app:installDevDebug` or `:app:installDebug`).
+1. `~/Library/Android/sdk/platform-tools/adb devices` shows at least one active device (if ≥2 devices are connected, pass `--device <id>` or let `suite-runner.py` auto-lease an idle device).
+2. App built from this branch: compile with `./gradlew assembleDebug | tail -3` (or `python3 scripts/gradle-build.py assembleDebug` inside `.worktrees/`), then deploy via `suite-runner.py --install` (do **not** run raw `./gradlew install...` without `ANDROID_SERIAL` when ≥2 devices are connected).
 3. Maestro tools: Verify `list_devices` returns the emulator; keep its `device_id`.
 4. **Emulator auth state (Context-aware):**
    - **Default:** Expects a signed-in test account.
@@ -147,7 +147,7 @@ the data the signed-in test account already has. No source is touched.
 **When a line needs data the account does not have** (a state the backend cannot produce yet, or
 one the account lacks), do not patch anything on your own. Collect every such line first, then ask
 **once per run** with `ask_question`, naming the lines and the state each needs:
-- **Mock it** — apply `.maestro/<RUN>/fixture-override.patch`, `./gradlew :app:installDevDebug | tail -3`, run those lines, then `git apply -R` and reinstall.
+- **Mock it** — apply `.maestro/<RUN>/fixture-override.patch`, build with `./gradlew assembleDebug | tail -3` and run those lines via `suite-runner.py --install`, then `git apply -R`, rebuild, and reinstall cleanly.
 - **I'll prepare the data** — mark those lines ⚠️ Not verified ("needs data: …") and run the rest.
 - **Skip** — mark them ⚠️ Not verified ("skipped by user").
 

@@ -152,10 +152,14 @@ def setup_lock_cleanup(device_id: str):
         pass
 
 
-def detect_device(device_arg=None, target="", enable_lock=True):
+def detect_device(device_arg=None, target="", enable_lock=True, inherited_lock_pid=None):
     """Detects connected device ID, auto-leases a free device if multiple exist, or validates the provided one."""
     env_serial = os.environ.get("ANDROID_SERIAL")
     explicit_device = device_arg or (env_serial.strip() if env_serial else None)
+
+    owned_pids = {os.getpid()}
+    if inherited_lock_pid:
+        owned_pids.add(int(inherited_lock_pid))
 
     try:
         out = run_adb("devices")
@@ -176,7 +180,7 @@ def detect_device(device_arg=None, target="", enable_lock=True):
         if explicit_device not in devices:
             sys.exit(f"BLOCKED: Specified device '{explicit_device}' not found in active devices: {devices}")
         lock_info = get_device_lock_info(explicit_device)
-        if lock_info and lock_info.get("pid") != os.getpid():
+        if lock_info and lock_info.get("pid") not in owned_pids:
             other_pid = lock_info.get("pid")
             target_desc = f" ({lock_info.get('target')})" if lock_info.get("target") else ""
             print(f"⚠️  Specified device '{explicit_device}' is currently locked by PID {other_pid}{target_desc}.")
@@ -185,10 +189,10 @@ def detect_device(device_arg=None, target="", enable_lock=True):
                 time.sleep(2)
                 waited += 2
                 lock_info = get_device_lock_info(explicit_device)
-                if not lock_info or lock_info.get("pid") == os.getpid():
+                if not lock_info or lock_info.get("pid") in owned_pids:
                     break
                 print(f"⏳ Waiting for device '{explicit_device}' to be released ({waited}/{LOCK_TIMEOUT_SECONDS}s)...")
-            if lock_info and lock_info.get("pid") != os.getpid():
+            if lock_info and lock_info.get("pid") not in owned_pids:
                 sys.exit(f"BLOCKED: Device '{explicit_device}' is busy (PID {lock_info.get('pid')}). Please wait or use another emulator.")
         acquire_device_lock(explicit_device, target)
         return explicit_device
@@ -197,7 +201,7 @@ def detect_device(device_arg=None, target="", enable_lock=True):
     if len(devices) == 1:
         dev = devices[0]
         lock_info = get_device_lock_info(dev)
-        if lock_info and lock_info.get("pid") != os.getpid():
+        if lock_info and lock_info.get("pid") not in owned_pids:
             other_pid = lock_info.get("pid")
             print(f"⏳ Single device '{dev}' is currently busy (PID {other_pid}). Waiting for release...")
             waited = 0
@@ -205,9 +209,9 @@ def detect_device(device_arg=None, target="", enable_lock=True):
                 time.sleep(2)
                 waited += 2
                 lock_info = get_device_lock_info(dev)
-                if not lock_info or lock_info.get("pid") == os.getpid():
+                if not lock_info or lock_info.get("pid") in owned_pids:
                     break
-            if lock_info and lock_info.get("pid") != os.getpid():
+            if lock_info and lock_info.get("pid") not in owned_pids:
                 sys.exit(f"BLOCKED: Device '{dev}' is busy (PID {lock_info.get('pid')}). Please wait or start a second emulator.")
         acquire_device_lock(dev, target)
         return dev
@@ -219,7 +223,7 @@ def detect_device(device_arg=None, target="", enable_lock=True):
     while True:
         for dev in devices:
             lock_info = get_device_lock_info(dev)
-            if not lock_info or lock_info.get("pid") == os.getpid():
+            if not lock_info or lock_info.get("pid") in owned_pids:
                 if not first_attempt:
                     print(f"✅ Device released! Auto-leased: {dev}")
                 else:
@@ -235,6 +239,41 @@ def detect_device(device_arg=None, target="", enable_lock=True):
 
         print(f"⏳ All devices busy ({devices}). Waiting for a free device ({elapsed}/{LOCK_TIMEOUT_SECONDS}s)...")
         time.sleep(2)
+
+
+def detect_app_package(flows: list[dict]) -> str:
+    """Auto-detects the Android package name from discovered Maestro flow appId headers or Gradle config."""
+    app_id_re = re.compile(r"^\s*appId\s*:\s*['\"]?([A-Za-z][A-Za-z0-9_]*\.[A-Za-z0-9_.]+)['\"]?")
+    for flow in flows:
+        fpath = flow.get("path", "")
+        if not fpath or not os.path.isfile(fpath):
+            continue
+        try:
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                for idx, line in enumerate(f):
+                    if idx >= 30:
+                        break
+                    m = app_id_re.match(line)
+                    if m:
+                        return m.group(1).strip()
+        except Exception:
+            continue
+
+    env_app_id = os.environ.get("APP_ID", "").strip()
+    if env_app_id and "." in env_app_id:
+        return env_app_id
+
+    for gradle_rel in ("app/build.gradle.kts", "app/build.gradle"):
+        gp = Path(gradle_rel)
+        if gp.is_file():
+            try:
+                txt = gp.read_text(encoding="utf-8", errors="ignore")
+                m = re.search(r'applicationId\s*[= ]\s*["\']([A-Za-z][A-Za-z0-9_]*\.[A-Za-z0-9_.]+)["\']', txt)
+                if m:
+                    return m.group(1).strip()
+            except Exception:
+                pass
+    return ""
 
 
 def run_preflight_checks(device_id, package_name, required_envs=None, mock_gps=None):
@@ -256,19 +295,22 @@ def run_preflight_checks(device_id, package_name, required_envs=None, mock_gps=N
         errors.append(f"Cannot communicate with device '{device_id}': {e}")
 
     # 2. Package installation check
-    try:
-        pm_path = run_adb("-s", device_id, "shell", "pm", "path", package_name).strip()
-        if not pm_path:
-            errors.append(
-                f"Package '{package_name}' is NOT installed on {device_id}.\n"
-                f"   👉 Decoupled solution: Build with './gradlew assembleDebug', then run suite-runner with '--install'\n"
-                f"      (e.g., `python3 skills/test-runner/scripts/suite-runner.py <target> -m step --install`),\n"
-                f"      which isolates the installation onto locked device {device_id} without colliding with other emulators."
-            )
-        else:
-            print(f"  ✅ App package installed: {package_name}")
-    except Exception as e:
-        errors.append(f"Failed to check package '{package_name}': {e}")
+    if not package_name:
+        print("  ⚠️ App package not detected (no literal appId in flows and no --app-pkg); skipping pm path check.")
+    else:
+        try:
+            pm_path = run_adb("-s", device_id, "shell", "pm", "path", package_name).strip()
+            if not pm_path:
+                errors.append(
+                    f"Package '{package_name}' is NOT installed on {device_id}.\n"
+                    f"   👉 Decoupled solution: Build with './gradlew assembleDebug', then run suite-runner with '--install'\n"
+                    f"      (e.g., `python3 skills/test-runner/scripts/suite-runner.py <target> -m step --install`),\n"
+                    f"      which isolates the installation onto locked device {device_id} without colliding with other emulators."
+                )
+            else:
+                print(f"  ✅ App package installed: {package_name}")
+        except Exception as e:
+            errors.append(f"Failed to check package '{package_name}': {e}")
 
     # 3. Required Environment Variables / Tokens
     if required_envs:
@@ -562,13 +604,22 @@ def flow_uses_launch_app(yaml_path: str) -> bool:
 
 def reset_app_state(package_name, splash_activity, device_id, skip_launch=False):
     """Resets application state to ensure a clean screen between flows."""
+    if not package_name:
+        return
     try:
         # Dismiss any lingering popups or software keyboard before stopping
         run_adb("-s", device_id, "shell", "input", "keyevent", "KEYCODE_BACK", check=False)
         run_adb("-s", device_id, "shell", "am", "force-stop", package_name, check=False)
         time.sleep(0.4)
         if not skip_launch:
-            run_adb("-s", device_id, "shell", "am", "start", "-n", f"{package_name}/{splash_activity}", check=False)
+            if splash_activity:
+                run_adb("-s", device_id, "shell", "am", "start", "-n", f"{package_name}/{splash_activity}", check=False)
+            else:
+                run_adb(
+                    "-s", device_id, "shell", "monkey",
+                    "-p", package_name, "-c", "android.intent.category.LAUNCHER", "1",
+                    check=False,
+                )
             time.sleep(1.0)
     except Exception:
         pass
@@ -866,12 +917,12 @@ def classify_failure(
             log_txt = Path(logcat_path).read_text(encoding="utf-8", errors="ignore")
         except Exception:
             pass
-    if f"FATAL EXCEPTION" in log_txt or f"ANR in {app_pkg}" in log_txt:
+    if "FATAL EXCEPTION" in log_txt or (app_pkg and f"ANR in {app_pkg}" in log_txt):
         return "APP_CRASH_OR_ANR", evidence, []
 
     # 2. Check if an overlay / external window / dialog is likely blocking
     nodes = _parse_xml_nodes(hierarchy_path)
-    is_external_win = bool(focus_window) and (app_pkg not in focus_window) and ("PopupWindow" in focus_window or "Dialog" in focus_window or "permissioncontroller" in focus_window or "gms" in focus_window)
+    is_external_win = bool(focus_window) and (not app_pkg or app_pkg not in focus_window) and ("PopupWindow" in focus_window or "Dialog" in focus_window or "permissioncontroller" in focus_window or "gms" in focus_window)
     has_close_hint = any(
         SAFE_CLOSE_HINT_RE.match(n["text"]) or SAFE_CLOSE_HINT_RE.match(n["desc"]) or SAFE_CLOSE_ID_RE.search(n["id"])
         for n in nodes
@@ -1422,8 +1473,8 @@ def main():
 
     # Advanced / backward-compatible flags (hidden from default --help to keep CLI lean)
     parser.add_argument("--repro", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--app-pkg", default="com.example.app", help=argparse.SUPPRESS)
-    parser.add_argument("--splash-activity", default="com.example.app.view.splash.SplashActivity", help=argparse.SUPPRESS)
+    parser.add_argument("--app-pkg", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--splash-activity", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--require-env", help=argparse.SUPPRESS)
     parser.add_argument("--mock-gps", help=argparse.SUPPRESS)
     parser.add_argument("--skip-preflight", action="store_true", help=argparse.SUPPRESS)
@@ -1543,6 +1594,13 @@ def main():
     if not flows:
         sys.exit(f"No valid YAML flows found in '{args.target}' (resolved='{target_str}', filter='{args.filter or ''}')")
 
+    # Auto-detect app package from flow appId headers (avoids hardcoded placeholder defaults)
+    if not args.app_pkg:
+        detected_pkg = detect_app_package(flows)
+        if detected_pkg:
+            args.app_pkg = detected_pkg
+            print(f"📦 Auto-detected app package from flows: {args.app_pkg}")
+
     if args.dry_run:
         print(f"Discovered {len(flows)} flows in {args.target}:")
         for i, f in enumerate(flows, start=1):
@@ -1553,7 +1611,17 @@ def main():
 
     # Detect device & run preflight before starting token tracking or spawning external Terminal
     enable_lock = not args.no_device_lock
-    device_id = detect_device(args.device, target=str(args.target), enable_lock=enable_lock)
+    inherited_lock_pid = None
+    if args.terminal_child:
+        raw_parent_pid = os.environ.get("MAESTRO_LOCK_PARENT_PID", "").strip()
+        if raw_parent_pid.isdigit():
+            inherited_lock_pid = int(raw_parent_pid)
+    device_id = detect_device(
+        args.device,
+        target=str(args.target),
+        enable_lock=enable_lock,
+        inherited_lock_pid=inherited_lock_pid,
+    )
     os.environ["ANDROID_SERIAL"] = device_id
 
     lock_handed_off = False
@@ -1660,6 +1728,7 @@ def main():
             )
             if wait_for_child:
                 tf.write(f"export MAESTRO_SUITE_RESULT_FILE={shlex.quote(result_path)}\n")
+            tf.write(f"export MAESTRO_LOCK_PARENT_PID={os.getpid()}\n")
             tf.write("export MAESTRO_TOKEN_MARK_INHERITED=1\n")
             tf.write(f"export ANDROID_SERIAL={shlex.quote(device_id)}\n")
             tf.write(f'export PATH={shlex.quote(f"{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}")}:"$PATH"\n')
@@ -1781,10 +1850,12 @@ def main():
                     os.unlink(p_tmp)
                 except OSError:
                     pass
+            # release_device_lock only unlinks if the lock is still owned by THIS parent PID
+            # (safe no-op when the child already took over and released it; cleans up if child died early).
+            if enable_lock:
+                release_device_lock(device_id)
             if not child_started:
                 lock_handed_off = False
-                if enable_lock:
-                    release_device_lock(device_id)
             if result_text:
                 print("\n" + result_text, flush=True)
             return child_rc
