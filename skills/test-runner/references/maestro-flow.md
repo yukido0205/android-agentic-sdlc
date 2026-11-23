@@ -39,19 +39,10 @@ Never use cryptic single-letter abbreviations like `s3`, `f3`, `s2s4`, `f5`. Fol
 
 `<RUN>` = `<TICKET>` when there is a ticket, else `yyMMdd-<kebab-slug>` (SKILL.md, "Run folder").
 
-## Code-First ID Extraction (Static First, Dynamic Fallback)
+## Authoring & Recovery Reference
 
-Reading source code to extract IDs is **10× faster** than querying an emulator and costs **~0 device tokens**:
-
-1. **Priority #1 — Static Source Code Scan (~90% of cases):**
-   Run `python3 skills/test-author/scripts/extract-selectors.py [path] -k "<keyword>"` (or grep `res/layout/*.xml` for `android:id="@+id/..."` and `*.kt` for `Modifier.testTag(...)`).
-   - **Found IDs in Code?** → Write the `.yaml` flow files immediately using the extracted bare IDs (`id: "<resource-id>"`) and resolved `strings.xml` text.
-2. **Priority #2 — Dynamic Device Fallback (Only when static scan misses or SDUI):**
-   Only when selectors are not in source code (Server-Driven UI, WebView, system dialogs) or a static selector fails at runtime:
-   - Reach the screen and run `python3 skills/test-runner/scripts/device.py nodes [substr]` to dump runtime IDs once.
-   - Write/update the `.yaml` flow file with the discovered ID.
-3. **Execute in One Continuous CLI Pass (`suite-runner.py`):**
-   Validate with `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/` and hand off to `python3 skills/test-runner/scripts/suite-runner.py .maestro/<RUN>/ -m step`.
+- **First-Time AC Authoring:** Use `/test-author` (Prove-First via Maestro MCP `inspect_screen` + `run`, then freeze standalone `.yaml` flows and validate with `validate-flow.py`).
+- **Random Overlay Registry (`.maestro/_shared/popups.json`):** When `suite-runner.py` hits a known overlay from `popups.json`, it dismisses it and warm-retries once without `force-stop`. Unknown app dialogs stop safely with `LIKELY_CAUSE: BLOCKED_BY_OVERLAY`. Use `@keep-dialogs` in a flow's comments/tags if the flow intentionally tests a dialog.
 
 ## One flow = one acceptance line
 

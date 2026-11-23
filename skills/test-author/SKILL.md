@@ -1,6 +1,6 @@
 ---
 name: test-author
-description: "Author deterministic, robust Maestro E2E test flows from PRD, Figma specs, and Jira acceptance criteria using Code-First ID Extraction (static XML/Compose scan first, device.py nodes as fallback). Enforces semantic domain directories (e.g., 01-order-list/), strict naming (ac-01-slug.yaml), selector best practices (id/text over coordinates), preflight dependencies, and reusable helpers. Use when creating new Maestro test flows, converting PRD/acceptance criteria to YAML, or when the runner reports missing flows."
+description: "Prove acceptance criteria on a live device first via Maestro MCP (inspect_screen + run), then freeze passing YAML flows to disk for zero-token regression. Enforces semantic domain directories (e.g., 01-order-list/), strict naming (ac-01-slug.yaml), standalone preconditions, selector best practices (id/text over coordinates), and project overlay registration (.maestro/_shared/popups.json). Use when testing ACs for the first time, creating new Maestro flows, or when test-runner reports missing flows."
 argument-hint: "<step-file | <TICKET> | PRD/plan path> [--domain <folder-name>]"
 model: sonnet
 allowed-tools:
@@ -14,17 +14,20 @@ allowed-tools:
   - Bash(~/Library/Android/sdk/platform-tools/adb *)
   - Bash(adb *)
   - Bash(git status --short *)
+  - mcp__maestro__list_devices
+  - mcp__maestro__inspect_screen
+  - mcp__maestro__run
   - mcp__maestro__cheat_sheet
 ---
 
-# Test Author — PRD & Acceptance to Deterministic Maestro Flows
+# Test Author — Prove-First, Freeze-After Maestro Authoring
 
-A dedicated skill for designing, structuring, and authoring clean, maintainable Maestro E2E test flows with **near-zero device token overhead**.
+A dedicated skill for verifying acceptance criteria (ACs) on the first pass with **minimum LLM calls** and freezing deterministic `.yaml` flows for later regression.
 
 > [!IMPORTANT]
-> **Separation of Concerns:**
-> - **Authoring (`/test-author`):** Extracts selectors via **Code-First ID Extraction** (Static Source Code first, Device Fallback only when needed), writes semantic YAML flows, and statically validates them.
-> - **Executing (`/test-runner`):** Runs authored suites in one continuous CLI pass via `suite-runner.py`. The runner **NEVER** authors or improvises flows.
+> **Separation of Concerns (Prove-First → Freeze-After):**
+> - **Authoring (`/test-author` — First Pass / New ACs):** Uses Maestro MCP (`inspect_screen` + `run`) to prove each AC live on the warm device, records any random app overlays into `.maestro/_shared/popups.json`, and **freezes** the passing YAML steps to disk at the end of the session (`validate-flow.py`).
+> - **Executing (`/test-runner` — Re-run / Regression / Gate 3):** Runs already-frozen suites via `suite-runner.py` in a fresh session with near-zero token cost. **Never** re-run `suite-runner.py` inside the same `/test-author` session if the ACs just passed via MCP.
 
 ---
 
@@ -59,122 +62,60 @@ All test flows live under `.maestro/<EPIC>/`.
 
 ---
 
-## 2. Authoring Workflow (Code-First ID Extraction)
+## 2. Authoring Workflow (Prove-First, Freeze-After)
 
-Reading source code to extract view IDs is **10× faster** than querying an emulator and costs **~0 device tokens**. Always follow the **Static-First, Dynamic-Fallback** pipeline:
+Blindly writing YAML flows from source code before touching the device causes selector mismatches and expensive `suite-runner.py` retry loops. Instead, prove each AC live first, then freeze the working YAML once:
 
 ```mermaid
 flowchart TD
-    A["1. Read Source Code First (Priority #1 — Fast, Cheap)<br/>Run extract-selectors.py or Grep XML (res/layout/) & Compose (Modifier.testTag)"] --> B{"Found IDs<br/>in Source Code?"}
-    B -->|"YES (~90% of cases)"| D["Write YAML Flow Files Immediately<br/>(Using bare IDs / text extracted from code)"]
-    B -->|"NO / Server-Driven UI"| C["Fallback: Query Live Device<br/>Run device.py nodes to dump runtime IDs"]
-    C --> D
-    D --> E["Validate & Hand Off to test-runner<br/>Run suite-runner.py in one continuous CLI pass"]
+    A["1. Extract ACs & Check Existing Flows<br/>(If flows already exist, hand off to test-runner)"] --> B["2. Live Prove via Maestro MCP<br/>inspect_screen (once per new screen) + batch mcp__maestro__run"]
+    B --> C{"Encountered Random<br/>App Overlay?"}
+    C -->|"YES"| D["Dismiss & Record in<br/>.maestro/_shared/popups.json"]
+    D --> B
+    C -->|"NO"| E["3. Freeze Passing Flows to Disk<br/>Standalone ac-NN-slug.yaml (with launchApp/nav) in 1-2 Write calls"]
+    E --> F["4. Static Gate: validate-flow.py<br/>(Do NOT re-run suite-runner.py in this session)"]
 ```
 
-### Step 1: Extract Acceptance Criteria
-Extract the criteria from the story, PRD, or plan file:
-```bash
-skills/test-author/scripts/extract-acceptance.sh plans/<EPIC_OR_TICKET>/PLAN.md [step-id]
-# or for bug workflows:
-skills/test-author/scripts/extract-acceptance.sh plans/<TICKET>/flow-bug.md
-```
-Map each top-level acceptance criterion (AC) directly to an `ac-NN-<slug>.yaml` file.
+### Step 1: Extract Acceptance Criteria & Check Preconditions
+1. Extract criteria from the story, PRD, or plan file:
+   ```bash
+   skills/test-author/scripts/extract-acceptance.sh plans/<EPIC_OR_TICKET>/PLAN.md [step-id]
+   # or for bug workflows:
+   skills/test-author/scripts/extract-acceptance.sh plans/<TICKET>/flow-bug.md
+   ```
+2. Verify device connectivity via `mcp__maestro__list_devices` (pass explicit `device_id` if ≥2 devices exist).
+3. If flows for these ACs **already exist** on disk, stop authoring and run them via `suite-runner.py` instead.
 
-### Step 2: Code-First ID Extraction (Static First, Dynamic Fallback)
+### Step 2: Live Prove-First via Maestro MCP (Low-Call Budget)
+Run ACs sequentially on the live warm device using `mcp__maestro__inspect_screen` and `mcp__maestro__run`:
+* **Screen Inspection Limit:** Call `inspect_screen` **at most once per new screen** to get runtime `id` / `text` selectors. Only grep source code (`extract-selectors.py` / `Grep`) when a view lacks a runtime ID or you need exact `strings.xml` error copy.
+* **Batch Steps:** Put an entire AC's interaction + assertion sequence into **one `mcp__maestro__run` call** instead of tapping step-by-step.
+* **Fix In-Place:** If a selector or step fails, inspect once, adjust the YAML snippet, and re-run that single snippet immediately (~2–5s).
+* **Random Overlays / Popups:** If an unexpected app overlay (user guide, promo, rating, tooltip) appears during MCP testing, dismiss it to continue AND append a safe rule (`when_visible` + `actions`) to `.maestro/_shared/popups.json` (see `skills/test-author/templates/popups.json`). Never use overly broad selectors like `OK` or `.*close.*`.
 
-#### 2a. Priority #1 — Static Source Code Extraction (~90% of screens)
-Before touching the emulator, scan the target feature's XML layouts (`res/layout/`), Jetpack Compose files (`Modifier.testTag`), and `strings.xml` using the static extractor:
-```bash
-python3 skills/test-author/scripts/extract-selectors.py [feature_module_or_dir] -k "<screen_or_feature_keyword>"
-```
-*(Or use `Grep` directly on `res/layout/*.xml` for `android:id="@+id/...` and `*.kt` for `testTag`).*
+### Step 3: Freeze Passing Flows to Disk (Batch Write)
+Once all ACs have passed live, freeze the exact working YAML snippets into `.maestro/<EPIC>/<NN-domain>/ac-NN-<slug>.yaml` in 1–2 `Write` calls:
+* **Standalone Precondition Rule (Mandatory):** Because MCP ran on a warm state, every frozen `ac-NN-*.yaml` **MUST** be standalone from app launch or a shared `_nav/` subflow (`launchApp: { clearState: false }` + navigation steps proved in AC-01) so `suite-runner.py` can execute any flow independently later.
+* **Keep Helpers Minimal:** Only extract `.maestro/<EPIC>/_shared/` or `.maestro/_nav/` helpers when ≥2 flows share the exact same setup/navigation sequence.
+* **Verify Before Reporting:** Never report ACs as frozen until all `.yaml` files are written and validated.
 
-**Selector Rules when extracting from code:**
-* **Prefer Bare IDs over flavor-hardcoded package IDs:** When XML defines `android:id="@+id/btn_submit"`, write `id: "btn_submit"` (or regex) so the flow works across all build variants (`dev`, `staging`, `prod`).
-* **Jetpack Compose (`Modifier.testTag`):** Use the verbatim string passed to `Modifier.testTag("<tag>")` as `id: "<tag>"` (requires `testTagsAsResourceId = true` on the Compose hierarchy). On a Compose row where the `testTag` sits on the tappable container and the label sits on a child `Text`, `tapOn` by `id:` and `assertVisible` by `text:` (resolved from `strings.xml`).
-
-#### 2b. Priority #2 — Dynamic Device Fallback (Only when static scan misses)
-Only query the live device when:
-1. `extract-selectors.py` / `Grep` finds no IDs for the target screen, **OR**
-2. The screen is **Server-Driven UI (SDUI)**, a **WebView**, or an **external SDK / System Dialog** (e.g., OS permission prompt, third-party picker), **OR**
-3. A flow authored from static IDs fails on `suite-runner.py` due to runtime view wrapping (`mergeDescendants`).
-
-When fallback is needed, dump the active screen's compact node table once:
-```bash
-python3 skills/test-runner/scripts/device.py nodes [optional_substring]
-```
-*(Never use full `inspect_screen` or full-screen screenshots just to find an ID).*
-
-### Step 3: Establish Common Helpers (`_shared/`)
-Check if login, navigation, or data seeding helpers already exist in `.maestro/_nav/` or `.maestro/<EPIC>/_shared/`. If not, author them first.
-Helpers must be idempotent:
-```yaml
-# _login-user.yaml
-appId: com.example.app
----
-- runFlow:
-    when:
-      visible:
-        id: "btn_login"
-    commands:
-      - tapOn:
-          id: "btn_login"
-      # input credentials...
-```
-
-### Step 4: Write Test Flows Immediately (Batch Authoring)
-Once you have the IDs (from Step 2a or 2b), write the `.yaml` flow files directly to disk without running slow step-by-step interactive MCP loops:
-```yaml
-# ac-01-display-all-orders.yaml
-appId: com.example.app
----
-# 1. State Setup / Navigation
-- runFlow:
-    file: ../_shared/_login-user.yaml
-    optional: true
-
-# 2. Action Steps
-- extendedWaitUntil:
-    visible:
-      id: "rv_order_list"
-    timeout: 10000
-
-# 3. Assertions (Strictly required)
-- assertVisible:
-    text: "My Orders"
-
-- assertVisible:
-    id: "tv_order_item_title"
-```
-
-### ⚠️ Anti-Flakiness & Quality Rules (Mandatory)
-* **NO Coordinate Tapping (`point:`):** Never use hardcoded pixel coordinates like `input tap 100 500` or `tapOn: { point: "100, 500" }`. Always extract the view ID from layout XMLs / Compose `testTag` or use accessible text.
-* **Always Assert:** Every flow must contain at least one `assertVisible`, `assertTrue`, or `assertNotVisible`. A flow with no assertion is not a test.
-* **Timeout Handling:** Prefer `extendedWaitUntil: { visible: ..., timeout: 10000 }` over static `sleep: 5000`.
-
----
-
-## 3. Static Validation
-
-Before committing or handing off to the runner, always validate the authored flows:
-
+### Step 4: Static Validation (End of Authoring Session)
+Always run the static validator before finishing:
 ```bash
 python3 skills/test-author/scripts/validate-flow.py .maestro/<EPIC>/
 ```
-
 The validator checks:
-* Directory naming standard (`NN-<domain-slug>`)
-* File naming standard (`ac-NN-<slug>.yaml`)
-* Coordinate tap detection (`point:` prohibition)
-* Presence of assertions (`assertVisible`)
-* Excessive sleep warnings
+* Directory (`NN-<domain-slug>`) and file (`ac-NN-<slug>.yaml`) naming
+* Coordinate tap prohibition (`point:`)
+* Presence of assertions (`assertVisible`, `assertTrue`, `assertNotVisible`)
+* Standalone precondition (`launchApp` / `runFlow`)
+* `.maestro/_shared/popups.json` rule safety (no overly broad selectors)
 
 ---
 
-## 4. Handoff to Test Runner (`suite-runner.py`)
-
-Once static validation passes, hand off the authored flows to `test-runner` to execute in one continuous CLI run:
-```bash
-python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/ -m step
-```
+## 3. When to Run `suite-runner.py`
+* **DO NOT** run `suite-runner.py` at the end of `/test-author` if all ACs just passed in the live MCP session — the flows are now proven and frozen.
+* **DO** run `suite-runner.py` in a **new session** for regression, post-fix verification, or Gate 3 before creating an MR:
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/ -m step
+  ```

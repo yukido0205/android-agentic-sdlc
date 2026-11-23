@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -371,7 +372,7 @@ def install_apk_on_device(device_id: str, apk_arg: Optional[str] = None, explici
     print(f"\n📦 Installing APK onto locked device [{device_id}]...")
     print(f"   • APK: {apk_file}")
     try:
-        out = run_adb("-s", device_id, "install", "-r", "-t", "-d", str(apk_file))
+        out = run_adb("-s", device_id, "install", "-r", "-t", "-d", "-g", str(apk_file))
         if "Success" not in out:
             print(f"   ⚠️ ADB Output: {out.strip()}")
         print(f"   ✅ Successfully installed APK onto [{device_id}]!\n")
@@ -548,17 +549,58 @@ def find_flows(target_path, filter_pattern=None):
     return parsed_flows
 
 
-def reset_app_state(package_name, splash_activity, device_id):
+def flow_uses_launch_app(yaml_path: str) -> bool:
+    """Returns True if the Maestro YAML flow already invokes launchApp."""
+    try:
+        content = Path(yaml_path).read_text(encoding="utf-8", errors="ignore")
+        return bool(re.search(r"^\s*-\s*launchApp\b", content, re.MULTILINE))
+    except Exception:
+        return False
+
+
+def reset_app_state(package_name, splash_activity, device_id, skip_launch=False):
     """Resets application state to ensure a clean screen between flows."""
     try:
         # Dismiss any lingering popups or software keyboard before stopping
         run_adb("-s", device_id, "shell", "input", "keyevent", "KEYCODE_BACK", check=False)
         run_adb("-s", device_id, "shell", "am", "force-stop", package_name, check=False)
-        time.sleep(0.5)
-        run_adb("-s", device_id, "shell", "am", "start", "-n", f"{package_name}/{splash_activity}", check=False)
-        time.sleep(1.0)
+        time.sleep(0.4)
+        if not skip_launch:
+            run_adb("-s", device_id, "shell", "am", "start", "-n", f"{package_name}/{splash_activity}", check=False)
+            time.sleep(1.0)
     except Exception:
         pass
+
+
+def get_window_focus(device_id: str) -> str:
+    """Returns current focused window line via dumpsys window (<50ms, immune to animations)."""
+    try:
+        res = subprocess.run(
+            [ADB, "-s", device_id, "shell", "dumpsys", "window", "displays"],
+            capture_output=True, text=True, timeout=3.0,
+        )
+        out = res.stdout or ""
+        for line in out.splitlines():
+            if "mCurrentFocus=" in line or "mFocusedApp=" in line:
+                return line.strip()
+        res2 = subprocess.run(
+            [ADB, "-s", device_id, "shell", "dumpsys", "window"],
+            capture_output=True, text=True, timeout=3.0,
+        )
+        for line in (res2.stdout or "").splitlines():
+            if "mCurrentFocus=" in line:
+                return line.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _run_adb_timeout(device_id: str, args: list[str], timeout: float = 5.0) -> str:
+    try:
+        res = subprocess.run([ADB, "-s", device_id, *args], capture_output=True, text=True, timeout=timeout)
+        return res.stdout or ""
+    except Exception:
+        return ""
 
 
 def capture_failure_artifacts(device_id, output_debug_dir, ac_code):
@@ -596,12 +638,12 @@ def capture_failure_artifacts(device_id, output_debug_dir, ac_code):
         except Exception:
             pass
 
-    # 3. Capture View Hierarchy via uiautomator dump for instant selector analysis
+    # 3. Capture View Hierarchy via uiautomator dump (bounded timeout so Lottie/animations don't hang)
     try:
         device_dump = f"/sdcard/dump_{ac_code}_{ts}.xml"
-        run_adb("-s", device_id, "shell", "uiautomator", "dump", device_dump, check=False)
-        run_adb("-s", device_id, "pull", device_dump, hierarchy_path, check=False)
-        run_adb("-s", device_id, "shell", "rm", "-f", device_dump, check=False)
+        _run_adb_timeout(device_id, ["shell", "uiautomator", "dump", device_dump], timeout=6.0)
+        _run_adb_timeout(device_id, ["pull", device_dump, hierarchy_path], timeout=4.0)
+        _run_adb_timeout(device_id, ["shell", "rm", "-f", device_dump], timeout=3.0)
     except Exception:
         hierarchy_path = ""
 
@@ -613,10 +655,13 @@ def capture_failure_artifacts(device_id, output_debug_dir, ac_code):
     except Exception:
         logcat_path = ""
 
+    focus_window = get_window_focus(device_id)
+
     return {
         "screenshot": screenshot_path if img_captured else "",
         "hierarchy": hierarchy_path if os.path.exists(hierarchy_path) else "",
         "logcat": logcat_path if os.path.exists(logcat_path) else "",
+        "focus_window": focus_window,
     }
 
 
@@ -655,7 +700,200 @@ def parse_yaml_steps_to_reproduce(yaml_path):
     return steps
 
 
-def generate_issue_report(flow_meta, error_msg, artifacts, issues_dir):
+# Built-in Android OS / Google Play Services system dialog rules (safe, app-agnostic)
+SYSTEM_POPUP_RULES = [
+    {
+        "name": "android-runtime-permission",
+        "when_visible": {"window": "com.android.permissioncontroller|com.google.android.permissioncontroller"},
+        "actions": [{"type": "tap", "id": "permission_allow_foreground_only_button|permission_allow_button|permission_allow_one_time_button"}],
+    },
+    {
+        "name": "google-autofill-save-password",
+        "when_visible": {"window": "com.google.android.gms", "text": "Save password|Autofill|Not now|Never"},
+        "actions": [{"type": "tap", "text": "^(Not now|Never|No thanks)$"}],
+    },
+]
+
+SAFE_CLOSE_HINT_RE = re.compile(
+    r"^(close|dismiss|skip|later|not now|got it|no thanks|đóng|bỏ qua|để sau|đã hiểu)$",
+    re.IGNORECASE,
+)
+SAFE_CLOSE_ID_RE = re.compile(r"(?:btn|iv|ic|img|action)[_-]?(?:close|dismiss|skip)(?:[_-].*)?$", re.IGNORECASE)
+
+
+def load_popup_rules(target_str: str) -> list[dict]:
+    """Loads built-in system dialog rules + project-specific .maestro/_shared/popups.json rules."""
+    rules = list(SYSTEM_POPUP_RULES)
+    candidates = [Path.cwd() / ".maestro" / "_shared" / "popups.json"]
+    p = Path(target_str).resolve()
+    for parent in [p, *p.parents]:
+        if parent.name == ".maestro":
+            candidates.insert(0, parent / "_shared" / "popups.json")
+            break
+    for cand in candidates:
+        if cand.is_file():
+            try:
+                data = json.loads(cand.read_text(encoding="utf-8"))
+                for r in data.get("rules", []):
+                    if isinstance(r, dict) and r.get("enabled", True) is not False and r.get("when_visible") and r.get("actions"):
+                        rules.append(r)
+                break
+            except Exception:
+                pass
+    return rules
+
+
+def _parse_xml_nodes(hierarchy_path: str) -> list[dict]:
+    if not hierarchy_path or not os.path.isfile(hierarchy_path):
+        return []
+    try:
+        root = ET.parse(hierarchy_path).getroot()
+    except Exception:
+        return []
+    nodes = []
+    for n in root.iter("node"):
+        rid = n.get("resource-id", "")
+        short_id = rid.split(":id/")[-1] if ":id/" in rid else rid
+        b_str = n.get("bounds", "")
+        cx, cy = None, None
+        m = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", b_str)
+        if m:
+            l, t, r, b = map(int, m.groups())
+            cx, cy = (l + r) // 2, (t + b) // 2
+        nodes.append({
+            "id": short_id,
+            "raw_id": rid,
+            "text": n.get("text", "") or "",
+            "desc": n.get("content-desc", "") or "",
+            "clickable": n.get("clickable") == "true",
+            "bounds": b_str,
+            "cx": cx,
+            "cy": cy,
+        })
+    return nodes
+
+
+def _node_matches(node: dict, matcher: dict) -> bool:
+    for key, attr in (("id", "id"), ("text", "text"), ("content_desc", "desc")):
+        pat = matcher.get(key)
+        if pat:
+            val = node.get(attr, "")
+            if not val or not re.search(pat, val, re.IGNORECASE):
+                return False
+    return any(k in matcher for k in ("id", "text", "content_desc"))
+
+
+def _rule_matches_screen(rule: dict, focus_window: str, nodes: list[dict]) -> bool:
+    when = rule.get("when_visible") or {}
+    win_pat = when.get("window")
+    if win_pat and not re.search(win_pat, focus_window or "", re.IGNORECASE):
+        return False
+    node_keys = {k: when[k] for k in ("id", "text", "content_desc") if when.get(k)}
+    if node_keys:
+        return any(_node_matches(n, node_keys) for n in nodes)
+    return bool(win_pat)
+
+
+def _execute_dismiss_actions(device_id: str, actions: list[dict], nodes: list[dict], debug_dir: str, ac_code: str) -> bool:
+    acted = False
+    cur_nodes = nodes
+    for step_idx, act in enumerate(actions):
+        atype = act.get("type", "")
+        if atype == "back":
+            _run_adb_timeout(device_id, ["shell", "input", "keyevent", "KEYCODE_BACK"], timeout=3.0)
+            acted = True
+            time.sleep(0.5)
+        elif atype == "tap":
+            if step_idx > 0:
+                tmp_xml = os.path.join(debug_dir, f"popup_step_{ac_code}_{step_idx}.xml")
+                _run_adb_timeout(device_id, ["shell", "uiautomator", "dump", "/sdcard/popup_step.xml"], timeout=5.0)
+                _run_adb_timeout(device_id, ["pull", "/sdcard/popup_step.xml", tmp_xml], timeout=3.0)
+                refreshed = _parse_xml_nodes(tmp_xml)
+                if refreshed:
+                    cur_nodes = refreshed
+            target_node = next((n for n in cur_nodes if _node_matches(n, act) and n["cx"] is not None), None)
+            if not target_node:
+                return acted
+            _run_adb_timeout(device_id, ["shell", "input", "tap", str(target_node["cx"]), str(target_node["cy"])], timeout=3.0)
+            acted = True
+            time.sleep(0.5)
+    return acted
+
+
+def try_dismiss_overlay(
+    device_id: str,
+    hierarchy_path: str,
+    focus_window: str,
+    flow_path: str,
+    rules: list[dict],
+    debug_dir: str,
+    ac_code: str,
+) -> tuple[bool, str]:
+    """Dismisses only known system dialogs or project popups.json rules. Returns (dismissed, rule_name)."""
+    nodes = _parse_xml_nodes(hierarchy_path)
+    if not nodes and not focus_window:
+        return False, ""
+
+    if os.path.isfile(flow_path) and "@keep-dialogs" in Path(flow_path).read_text(encoding="utf-8", errors="ignore"):
+        return False, ""
+
+    for rule in rules:
+        if _rule_matches_screen(rule, focus_window, nodes):
+            if _execute_dismiss_actions(device_id, rule["actions"], nodes, debug_dir, ac_code):
+                return True, rule.get("name", "known-rule")
+
+    return False, ""
+
+
+def classify_failure(
+    error_summary: str,
+    focus_window: str,
+    hierarchy_path: str,
+    logcat_path: str,
+    app_pkg: str,
+) -> tuple[str, list[str], list[str]]:
+    """Classifies failure into LIKELY_CAUSE + raw evidence lines + overlay clickable hints."""
+    evidence: list[str] = []
+    if focus_window:
+        evidence.append(f"Focus: {focus_window}")
+
+    # 1. Check Crash / ANR in logcat
+    log_txt = ""
+    if logcat_path and os.path.isfile(logcat_path):
+        try:
+            log_txt = Path(logcat_path).read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            pass
+    if f"FATAL EXCEPTION" in log_txt or f"ANR in {app_pkg}" in log_txt:
+        return "APP_CRASH_OR_ANR", evidence, []
+
+    # 2. Check if an overlay / external window / dialog is likely blocking
+    nodes = _parse_xml_nodes(hierarchy_path)
+    is_external_win = bool(focus_window) and (app_pkg not in focus_window) and ("PopupWindow" in focus_window or "Dialog" in focus_window or "permissioncontroller" in focus_window or "gms" in focus_window)
+    has_close_hint = any(
+        SAFE_CLOSE_HINT_RE.match(n["text"]) or SAFE_CLOSE_HINT_RE.match(n["desc"]) or SAFE_CLOSE_ID_RE.search(n["id"])
+        for n in nodes
+    )
+    is_dialog_win = "Dialog" in (focus_window or "") or "PopupWindow" in (focus_window or "")
+    if is_external_win or is_dialog_win or has_close_hint:
+        hints = []
+        for n in nodes:
+            if n["clickable"] or n["id"] or SAFE_CLOSE_HINT_RE.match(n["text"]):
+                label = n["id"] or n["desc"] or n["text"]
+                if label:
+                    hints.append(f"{label} {n['bounds']}")
+            if len(hints) >= 8:
+                break
+        return "BLOCKED_BY_OVERLAY", evidence, hints
+
+    # 3. Selector vs Assertion
+    err_lower = (error_summary or "").lower()
+    if "not found" in err_lower or "timed out" in err_lower or "element" in err_lower:
+        return "SELECTOR_NOT_FOUND", evidence, []
+    return "ASSERTION_FAILED", evidence, []
+
+
+def generate_issue_report(flow_meta, error_msg, artifacts, issues_dir, likely_cause="ASSERTION_FAILED"):
     """Creates a markdown defect report matching issue-report-template.md immediately."""
     os.makedirs(issues_dir, exist_ok=True)
     
@@ -673,8 +911,11 @@ def generate_issue_report(flow_meta, error_msg, artifacts, issues_dir):
     screenshot = artifacts.get("screenshot", "")
     hierarchy = artifacts.get("hierarchy", "")
     logcat = artifacts.get("logcat", "")
+    focus_window = artifacts.get("focus_window", "")
 
-    evidence_parts = []
+    evidence_parts = [f"- Likely Cause: `{likely_cause}`"]
+    if focus_window:
+        evidence_parts.append(f"- Focus Window: `{focus_window}`")
     if screenshot:
         evidence_parts.append(f"- Screenshot: `{screenshot}`")
     if hierarchy:
@@ -913,34 +1154,36 @@ def main():
     parser = argparse.ArgumentParser(description="High-Volume E2E Test Suite Runner for Dev & QC")
     parser.add_argument("target", help="Folder of YAML flows, ticket folder, or single YAML file")
     parser.add_argument("-m", "--mode", choices=["repro", "step", "regression", "smoke"], help="Execution mode preset (repro, step, regression, smoke)")
-    parser.add_argument("--device", help="ADB device ID")
-    parser.add_argument("--resume", action="store_true", help="Resume from previous checkpoint")
-    parser.add_argument("--fail-fast", nargs="?", const=1, type=int, help="Stop after N failures (default 1)")
-    parser.add_argument("--filter", help="Filter flows by keyword or tag (e.g. @smoke)")
-    parser.add_argument("--repro", action="store_true", help="Shortcut for '-m repro' — runs only reproduction flows (ac-01-repro.yaml)")
-    parser.add_argument("--no-reset", action="store_true", help="Skip app force-stop and relaunch between tests")
-    parser.add_argument("--app-pkg", default="com.example.app", help="Target app package")
-    parser.add_argument("--splash-activity", default="com.example.app.view.splash.SplashActivity")
-    parser.add_argument("--require-env", help="Comma-separated list of required env variables/tokens (e.g. API_AUTH_TOKEN)")
-    parser.add_argument("--mock-gps", help="Mock GPS latitude and longitude (e.g. '37.4220,-122.0841')")
-    parser.add_argument("--skip-preflight", action="store_true", help="Skip preflight environment checks")
-    parser.add_argument("--output-dir", help="Output directory for reports and logs")
-    parser.add_argument("--dry-run", action="store_true", help="List flows that would be executed and exit")
-    parser.add_argument("--open-terminal", action="store_true", help="Launch suite in a new external macOS Terminal window for real-time live monitoring")
-    parser.add_argument("--new-terminal", action="store_true", help="Force opening a new external Terminal window instead of reusing existing monitor window")
-    parser.add_argument("--headless", "--no-terminal", dest="headless", action="store_true", help="Run directly in current shell without opening an external Terminal window (only when explicitly requested by user)")
-    parser.add_argument("--_terminal-child", dest="terminal_child", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--no-token-track", action="store_true", help="Skip automatic token usage tracking")
-    parser.add_argument("--no-device-lock", action="store_true", help="Bypass automatic device locking and leasing")
     parser.add_argument(
         "--install",
         nargs="?",
         const="auto",
         default=None,
         metavar="APK_PATH",
-        help="Install APK onto the locked device before running tests (auto-detects debug APK in build outputs if path is omitted)",
+        help="Install APK onto the locked device before running (auto-detects debug APK if omitted)",
     )
-    parser.add_argument("--apk", dest="apk_path", help="Explicit APK file path to install (used with or as alternative to --install)")
+    parser.add_argument("--resume", action="store_true", help="Resume from previous checkpoint")
+    parser.add_argument("--fail-fast", nargs="?", const=1, type=int, help="Stop after N failures (default 1)")
+    parser.add_argument("--filter", help="Filter flows by keyword or tag (e.g. @smoke)")
+    parser.add_argument("--device", help="ADB device ID")
+    parser.add_argument("--no-reset", action="store_true", help="Skip app force-stop between tests")
+    parser.add_argument("--headless", "--no-terminal", dest="headless", action="store_true", help="Run in current shell without external Terminal (when requested by user)")
+
+    # Advanced / backward-compatible flags (hidden from default --help to keep CLI lean)
+    parser.add_argument("--repro", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--app-pkg", default="com.example.app", help=argparse.SUPPRESS)
+    parser.add_argument("--splash-activity", default="com.example.app.view.splash.SplashActivity", help=argparse.SUPPRESS)
+    parser.add_argument("--require-env", help=argparse.SUPPRESS)
+    parser.add_argument("--mock-gps", help=argparse.SUPPRESS)
+    parser.add_argument("--skip-preflight", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--output-dir", help=argparse.SUPPRESS)
+    parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--open-terminal", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--new-terminal", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--_terminal-child", dest="terminal_child", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-token-track", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-device-lock", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--apk", dest="apk_path", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
 
@@ -1306,6 +1549,8 @@ def main():
     C_CYAN = "\033[1;36m" if is_tty else ""
     C_DIM = "\033[2m" if is_tty else ""
 
+    popup_rules = load_popup_rules(target_str)
+
     try:
         for idx, flow in enumerate(flows, start=1):
             ac = flow["ac"]
@@ -1336,18 +1581,47 @@ def main():
             else:
                 print(f"{step_prefix}[{idx:03d}/{total:03d}] 🔄 Running {ac}: {title}...", flush=True)
 
-            # Teardown / Reset before executing flow
+            # Teardown / Reset before executing flow (skip redundant am start if flow calls launchApp)
             if not args.no_reset:
-                reset_app_state(args.app_pkg, args.splash_activity, device_id)
+                reset_app_state(
+                    args.app_pkg,
+                    args.splash_activity,
+                    device_id,
+                    skip_launch=flow_uses_launch_app(flow_path),
+                )
 
             debug_dir = os.path.join(out_dir, "debug", f"{idx:03d}_{ac}")
             run_res = run_maestro_flow(maestro_bin, device_id, flow_path, debug_dir)
             duration_s = int(round(run_res["duration"]))
 
+            # Safe overlay recovery + 1 warm retry (never force-stops on retry so session-seen flags stay intact)
+            artifacts = None
+            dismiss_note = ""
+            if not run_res["passed"]:
+                artifacts = capture_failure_artifacts(device_id, debug_dir, ac)
+                dismissed, rule_name = try_dismiss_overlay(
+                    device_id,
+                    artifacts.get("hierarchy", ""),
+                    artifacts.get("focus_window", ""),
+                    flow_path,
+                    popup_rules,
+                    debug_dir,
+                    ac,
+                )
+                if dismissed:
+                    print(f"\n          🔄 Dismissed overlay [{rule_name}], warm-retrying {ac}...", flush=True)
+                    retry_res = run_maestro_flow(maestro_bin, device_id, flow_path, debug_dir)
+                    duration_s += int(round(retry_res["duration"]))
+                    run_res = retry_res
+                    dismiss_note = f"(overlay dismissed: {rule_name})"
+                    if run_res["passed"]:
+                        artifacts = None
+
             if run_res["passed"]:
                 verified_count += 1
                 warn_extra = f" {run_res['warning']}" if run_res.get("warning") else ""
-                log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ✅ {ac}: {title} - verified - {verified_count}/{total} [{duration_s}s]{warn_extra}"
+                note_extra = f" {dismiss_note}" if dismiss_note else ""
+                log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ✅ {ac}: {title} - verified - {verified_count}/{total} [{duration_s}s]{warn_extra}{note_extra}"
                 if is_tty:
                     print(f"{CLR_LINE}{C_GREEN}{log_line}{C_RESET}", flush=True)
                 else:
@@ -1362,31 +1636,53 @@ def main():
                 checkpoint_data["passed"] = verified_count
             else:
                 failed_count += 1
-                log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ❌ {ac}: {title} - FAILED [{duration_s}s]"
+                if artifacts is None:
+                    artifacts = capture_failure_artifacts(device_id, debug_dir, ac)
+
+                likely_cause, evidence_lines, overlay_hints = classify_failure(
+                    run_res["error_summary"],
+                    artifacts.get("focus_window", ""),
+                    artifacts.get("hierarchy", ""),
+                    artifacts.get("logcat", ""),
+                    args.app_pkg,
+                )
+
+                log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ❌ {ac}: {title} - FAILED [{likely_cause}] [{duration_s}s]"
                 if is_tty:
                     print(f"{CLR_LINE}{C_RED}{log_line}{C_RESET}", flush=True)
                 else:
                     print(f"{log_line}", flush=True)
-                
-                # Robust evidence capture & instant issue report generation
-                artifacts = capture_failure_artifacts(device_id, debug_dir, ac)
-                issue_path = generate_issue_report(flow, run_res["error_summary"], artifacts, str(issues_dir))
-                
+
+                print(f"          ├── 🔎 Likely Cause: {likely_cause}")
+                for ev in evidence_lines:
+                    print(f"          ├── {ev}")
                 if artifacts.get("screenshot"):
                     print(f"          ├── 📸 Snapshot: {artifacts['screenshot']}")
                 if artifacts.get("hierarchy"):
                     print(f"          ├── 🔍 UI Hierarchy: {artifacts['hierarchy']}")
-                print(f"          └── 📝 ISSUE LOGGED: {issue_path}", flush=True)
 
-                checkpoint_data.setdefault("completed", {})[flow_path] = {
+                issue_path = ""
+                if likely_cause == "BLOCKED_BY_OVERLAY":
+                    print("          ├── 🚧 Blocked by overlay/dialog — skipping false defect report in issues/.")
+                    if overlay_hints:
+                        print(f"          ├── 🖱️  Visible overlay nodes: {' | '.join(overlay_hints[:5])}")
+                    print("          └── 💡 Next: inspect once via MCP, dismiss/save rule to .maestro/_shared/popups.json, then run `--resume --no-reset`.", flush=True)
+                else:
+                    issue_path = generate_issue_report(flow, run_res["error_summary"], artifacts, str(issues_dir), likely_cause=likely_cause)
+                    print(f"          └── 📝 ISSUE LOGGED: {issue_path}", flush=True)
+
+                cp_entry = {
                     "status": "FAILED",
+                    "likely_cause": likely_cause,
                     "step": current_step,
                     "ac": ac,
                     "title": title,
                     "duration": duration_s,
-                    "issue": issue_path,
                     "evidence": artifacts,
                 }
+                if issue_path:
+                    cp_entry["issue"] = issue_path
+                checkpoint_data.setdefault("completed", {})[flow_path] = cp_entry
                 checkpoint_data["failed"] = failed_count
 
             # Append to progress log

@@ -32,26 +32,26 @@ allowed-tools:
 # E2E Test Automation — PRD Behavior + Figma Look + Regression on Device
 
 The unified test automation system for Android development and QC:
-1. **Single-Step Authoring & Verification (`behavior`):** Author flows via **Code-First ID Extraction** (`extract-selectors.py` / source scan first, `device.py nodes` only as fallback) and execute via `suite-runner.py`.
-2. **High-Speed Suite & Regression Runner (`regression` / `suite`):** Execute multi-flow suites or full regression (~270 items) via `suite-runner.py` with real-time live terminal monitoring, instant defect logging, and state reset.
-3. **Design Verification (`design`):** Measure exact screen metrics (dp, padding, colors) against Figma specs using `device.py check`.
+1. **First-Time AC Authoring (`/test-author`):** Proves ACs live via Maestro MCP (`inspect_screen` + `run`), registers any random app overlays in `.maestro/_shared/popups.json`, and freezes standalone `.yaml` flows.
+2. **High-Speed Suite & Regression Runner (`suite-runner.py`):** Executes frozen flows or full regression (~270 items) with real-time live terminal monitoring, safe overlay recovery, `LIKELY_CAUSE` triage, and state reset.
+3. **Design Verification (`design`):** Measures exact screen metrics (dp, padding, colors) against Figma specs using `device.py check`.
 
 | Mode | Answers | Tool | Re-run cost |
 |---|---|---|---|
-| `behavior` | Does it do what the PRD says? | Code-First YAML authoring + `suite-runner.py -m step` | ~0 — native CLI pass/fail |
+| `behavior` (first pass) | Does it do what the PRD says? | `/test-author` (MCP Prove-First + Freeze) | Frozen to YAML for 0-token re-runs |
 | `design` | Does it look like Figma? | `device.py check` — Figma numbers vs measured dp/colours | a table, only diffs need eyes |
-| `regression` | Does the epic meet its PRD edge cases? | `suite-runner.py` — native CLI execution with live monitor | ~0 tokens |
+| `regression` / `step` | Do frozen flows still pass? | `suite-runner.py` — native CLI execution with live monitor | ~0 tokens |
 
 ---
 
-## 🛑 UNIVERSAL DEFAULT ENTRYPOINT — RUNNER-FIRST POLICY
+## 🛑 ROUTING POLICY — EXISTING FLOWS VS FIRST-TIME ACs
 
-**RULE #1 (MANDATORY & NON-NEGOTIABLE):**
-Unless the user explicitly asks to *author/write a brand new test file from scratch*, **EVERY request to test, verify, run, check, or validate on device MUST DEFAULT TO CALLING `suite-runner.py` IMMEDIATELY**:
-
-```bash
-python3 skills/test-runner/scripts/suite-runner.py <target> [options]
-```
+**RULE #1 (MANDATORY):**
+- **When frozen `.yaml` flows already exist** (regression, post-fix re-run, Gate 3 before MR): **DEFAULT TO CALLING `suite-runner.py` IMMEDIATELY**:
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py <target> [options]
+  ```
+- **When NO `.yaml` flows exist yet** (first time testing ACs, or `suite-runner.py` reports `No valid YAML flows found`): **DO NOT** write blind YAML flows from source code or run manual `adb shell input tap` loops. Invoke **`/test-author`** (Prove-First via Maestro MCP → Freeze to YAML).
 
 *(Note: `suite-runner.py` automatically initializes background token usage tracking and exports a report upon completion).*
 
@@ -88,16 +88,15 @@ Let `suite-runner.py` run natively. It handles execution, terminal streaming, de
 
 ### Only When `suite-runner.py` Completes:
 - **If all tests PASS (✅):** Report the summary table and finish immediately.
-- **If a test FAILS (❌):**
-  - Runner has ALREADY created `issues/NN-<slug>.md`, captured the screenshot, and dumped UI hierarchy XML.
-  - ONLY THEN does the AI Agent read the issue file and failure evidence to explain the cause or propose a fix.
+- **If a test FAILS (❌):** Check the `LIKELY_CAUSE` printed by `suite-runner.py` before concluding it is an app bug:
+  - **`BLOCKED_BY_OVERLAY`:** Runner detected a random app/system overlay (user guide, promo, rating, etc.) and skipped creating a false bug report. Call `mcp__maestro__inspect_screen` once, dismiss the overlay, add a specific rule (`when_visible` + `actions`) to `.maestro/_shared/popups.json`, and resume with `suite-runner.py <target> --resume --no-reset`.
+  - **`SELECTOR_NOT_FOUND`:** Verify with 1 `mcp__maestro__inspect_screen` call whether the app UI changed or an animation/timing shifted; if it's a flow selector drift, update the YAML and resume with `--resume`.
+  - **`ASSERTION_FAILED` / `APP_CRASH_OR_ANR`:** Genuine app defect candidate. Read the generated `issues/NN-<slug>.md` and failure evidence to report or fix.
 
 ### When No Flows Exist or When Authoring New Tests:
 - If `suite-runner.py` reports `No valid YAML flows found`, **STOP IMMEDIATELY**.
-- **DO NOT** attempt manual exploratory testing (`inspect_screen`, `adb shell input tap`).
-- **DO NOT** write improvised YAML flows inside a verification session.
-- Instruct the user to use the dedicated authoring skill:
-  > *"No Maestro test flows found for this target. Please invoke `/test-author <target>` to generate the test flows before running verification."*
+- **DO NOT** attempt manual `adb shell input tap` loops or blind YAML authoring.
+- Use `/test-author <target>` (Prove-First via Maestro MCP → Freeze to `.yaml`) to create and prove the flows first.
 
 ---
 
@@ -162,23 +161,13 @@ For each `AC-n`, classify once: **behavior**, **design**, or **not on device** (
 
 ---
 
-## 2 · Behavior mode (Single Step Authoring & Verification — Code-First ID Extraction)
+## 2 · Authoring New Flows (Hand Off to `/test-author`)
 
-When authoring and verifying new test flows for a step, follow the **Static-First, Dynamic-Fallback** workflow:
-1. Read `references/maestro-flow.md` for the **semantic naming conventions**.
-2. **Never use cryptic folder names** (`s3`, `f3`, `s2s4`). Structure folders descriptively:
-   - Feature folder: `.maestro/<RUN>/<index>-<feature-domain>/` (e.g. `.maestro/<TICKET>/03-checkout-payment/`)
-   - Flow file: `ac-<index>-<verbatim-behavior-slug>.yaml` (e.g. `ac-01-submit-disabled-when-empty.yaml`)
-3. **Step 1 — Read Source Code First (Priority #1, ~90% of cases, ~0 device tokens):**
-   - Run `python3 skills/test-author/scripts/extract-selectors.py [module_or_path] -k "<keyword>"` (or `Grep` `res/layout/` for `android:id` and Compose `.kt` files for `Modifier.testTag`).
-   - **Found IDs in Code?** Proceed directly to Step 4 and write the `.yaml` files.
-   - **Not found / Server-Driven UI (SDUI)?** Fallback to Step 3b: reach the screen and run `python3 skills/test-runner/scripts/device.py nodes [substr]` once to dump runtime IDs.
-4. **Step 2 — Write `.yaml` Flow Files Immediately:**
-   - Write the `.yaml` flow files using the bare IDs (`id: "<view_id>"`) and text extracted in Step 1.
-   - Header must include: `# AC-n: <short title> — PRD §n`. Optional tags: `@smoke`, `@regression`.
-   - Validate statically: `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/`.
-5. **Step 3 — Execute One Continuous Pass via `suite-runner.py` (§2b):**
-   - Run `python3 skills/test-runner/scripts/suite-runner.py .maestro/<RUN>/<index>-<feature-domain>/ -m step` to execute all flows natively with live terminal streaming and 0 token bleed.
+When ACs have no frozen `.yaml` files yet, do **not** author flows blindly from source code inside `test-runner`. Invoke `/test-author`:
+1. Prove each AC live via Maestro MCP (`inspect_screen` once per new screen + batched `mcp__maestro__run`).
+2. Record any random app overlay encountered into `.maestro/_shared/popups.json`.
+3. Freeze standalone `ac-NN-<slug>.yaml` files (with `launchApp` / `_nav/` preconditions) and validate with `validate-flow.py`.
+4. Do not re-run `suite-runner.py` in the same session if ACs just passed via MCP; use `suite-runner.py` in a fresh session for regression or Gate 3.
 
 ---
 
@@ -198,17 +187,14 @@ Instead of remembering disparate flags, choose the preset matching your goal:
 - `-m regression`: Runs entire suite (`--resume`, live terminal).
 - `-m smoke`: Runs fast smoke suite (`--filter @smoke`, `--fail-fast 1`, live terminal).
 
-### Granular Override Options (Highest Precedence Over Presets):
-- `--open-terminal`: Opens live macOS Terminal window for real-time monitoring (default across all modes).
-- `--headless`, `--no-terminal`: **Use only when explicitly requested in prompt** (blocked by `pre-tool-guard.py` and `suite-runner.py` if agent adds it unrequested).
-- `--filter <tag_or_keyword>`: Filters flows by keyword or tag (overrides preset filter).
-- `--fail-fast [N]`: Stops execution after N failures (default 1).
+### Core Options (Most runs only need `-m` and `--install`):
+- `--install [APK_PATH]`: Locks an available emulator and installs the debug APK exclusively to it.
 - `--resume`: Resumes from `checkpoint.json` (skips passed flows).
-- `--require-env <vars>`: Comma-separated list of required env variables/tokens (e.g. `API_AUTH_TOKEN`).
-- `--mock-gps <lat,lon>`: Configures mock GPS location (e.g. `37.4220,-122.0841`).
-- `--device <id>`: ADB device ID when targeting a specific device.
-- `--no-reset`: Skips force-stop and relaunch between flows.
-- `--skip-preflight`: Skips preflight environment checks.
+- `--filter <tag_or_keyword>`: Filters flows by keyword or tag.
+- `--fail-fast [N]`: Stops execution after N failures (default 1).
+- `--device <id>`: Targets a specific ADB device ID.
+- `--no-reset`: Skips `force-stop` between flows (useful when resuming after dismissing a session overlay).
+- `--headless`: **Use only when explicitly requested in prompt** (blocked by `pre-tool-guard.py` and `suite-runner.py` if agent adds it unrequested).
 
 ### What `suite-runner.py` handles automatically:
 1. **Configuration Transparency:** Prints `⚙️ SUITE CONFIGURATION` banner displaying active Mode, Terminal, Fail-Fast, and Filter.

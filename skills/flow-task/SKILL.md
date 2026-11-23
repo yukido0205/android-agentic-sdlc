@@ -86,8 +86,8 @@ Wait for user decision. Record user response under **Decision & Step Ladder**.
 Repeat until a round keeps no finding (max 3 rounds):
 
 1. **Device Execution (Parallel-Safe):**
-   - Author Maestro YAML flows via `test-author` (`.maestro/<TICKET>/.../ac-NN-<slug>.yaml`) and validate with `validate-flow.py`.
-   - **Isolated Install & Run:** Execute `test-runner` with `--install`:
+   - **First pass (no frozen flows yet):** Prove ACs live via `test-author` (Maestro MCP `inspect_screen` + `run`), register any random app overlays in `.maestro/_shared/popups.json`, freeze standalone `.maestro/<TICKET>/.../ac-NN-<slug>.yaml` flows, and validate with `validate-flow.py`. (Do not re-run `suite-runner.py` in the same round if ACs just passed via MCP.)
+   - **Re-runs / subsequent rounds / regression:** Execute frozen flows via `test-runner` with `--install`:
      ```bash
      python3 skills/test-runner/scripts/suite-runner.py .maestro/<TICKET>/ -m step --install
      ```

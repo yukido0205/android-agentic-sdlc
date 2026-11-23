@@ -15,6 +15,7 @@ Zero external dependencies (Python 3.8+ stdlib only).
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -31,8 +32,22 @@ RESET = "\033[0m"
 FOLDER_PATTERN = re.compile(r"^(\d{2}-[a-z0-9-]+|regression|_.*|templates)$")
 FILE_PATTERN = re.compile(r"^(ac-\d{2}-[a-z0-9-]+\.yaml|_.*\.yaml)$")
 ASSERTION_PATTERN = re.compile(r"^\s*-\s*(assertVisible|assertTrue|assertNotVisible):", re.MULTILINE)
+PRECONDITION_PATTERN = re.compile(r"^\s*-\s*(launchApp|runFlow)\b", re.MULTILINE)
 COORDINATE_TAP_PATTERN = re.compile(r"point:\s*[\"']?\s*\d+\s*,\s*\d+", re.IGNORECASE)
 EXCESSIVE_SLEEP_PATTERN = re.compile(r"^\s*-\s*sleep:\s*(\d+)", re.MULTILINE)
+
+TOO_BROAD_POPUP_SELECTORS = {
+    "ok",
+    "cancel",
+    "yes",
+    "no",
+    "close",
+    "dismiss",
+    ".*close.*",
+    ".*ok.*",
+    ".*",
+    ".+",
+}
 
 
 def validate_file(path: Path) -> tuple[list[str], list[str]]:
@@ -75,12 +90,17 @@ def validate_file(path: Path) -> tuple[list[str], list[str]]:
             f"Use resource ID ('id: ...') or text ('text: ...') selectors instead."
         )
 
-    # 4. Assertion check for test flows (helpers exempt)
+    # 4. Assertion & standalone precondition checks for test flows (helpers exempt)
     if not is_helper:
         if not ASSERTION_PATTERN.search(content):
             errors.append(
                 "Missing test assertion. Test flows must contain at least one "
                 "'assertVisible', 'assertTrue', or 'assertNotVisible'."
+            )
+        if not PRECONDITION_PATTERN.search(content):
+            warnings.append(
+                "No 'launchApp' or 'runFlow' precondition found. Frozen flows should be standalone "
+                "from app launch or a shared _nav/ subflow so suite-runner.py can run them independently."
             )
 
     # 5. Excessive sleep warning
@@ -91,6 +111,46 @@ def validate_file(path: Path) -> tuple[list[str], list[str]]:
                 f"Sleep of {ms_str}ms detected. Consider using 'extendedWaitUntil: {{ visible: ..., timeout: ... }}' "
                 f"instead of hardcoded sleep."
             )
+
+    return errors, warnings
+
+
+def validate_popups_json(path: Path) -> tuple[list[str], list[str]]:
+    """Validate .maestro/_shared/popups.json to prevent overly broad dismissal rules."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return [f"Invalid JSON in {path.name}: {e}"], warnings
+
+    rules = data.get("rules")
+    if not isinstance(rules, list):
+        return [f"{path.name} must contain a 'rules' list."], warnings
+
+    for idx, rule in enumerate(rules, start=1):
+        if not isinstance(rule, dict):
+            errors.append(f"Rule #{idx} must be an object.")
+            continue
+        if rule.get("enabled") is False:
+            continue
+        name = rule.get("name") or f"rule-{idx}"
+        when = rule.get("when_visible")
+        if not isinstance(when, dict) or not any(when.get(k) for k in ("id", "text", "content_desc", "window")):
+            errors.append(
+                f"Popup rule '{name}' must define 'when_visible' with at least one of: id, text, content_desc, window."
+            )
+        else:
+            for k in ("id", "text", "content_desc"):
+                val = str(when.get(k, "")).strip().lower()
+                if val and val in TOO_BROAD_POPUP_SELECTORS:
+                    errors.append(
+                        f"Popup rule '{name}' has overly broad 'when_visible.{k}' ('{when.get(k)}'). "
+                        "Use a specific container/overlay ID or title to avoid dismissing real app dialogs."
+                    )
+        actions = rule.get("actions")
+        if not isinstance(actions, list) or not actions:
+            errors.append(f"Popup rule '{name}' must define a non-empty 'actions' list.")
 
     return errors, warnings
 
@@ -114,6 +174,18 @@ def main():
         print(f"{RED}No .yaml files found in {target_path}{RESET}")
         sys.exit(1)
 
+    # Also validate .maestro/_shared/popups.json if discoverable from target_path
+    popups_files: list[Path] = []
+    for cand in [target_path / "popups.json", target_path / "_shared" / "popups.json"]:
+        if cand.is_file():
+            popups_files.append(cand)
+    for parent in [target_path, *target_path.parents]:
+        if parent.name == ".maestro":
+            p = parent / "_shared" / "popups.json"
+            if p.is_file() and p not in popups_files:
+                popups_files.append(p)
+            break
+
     print(f"\n{BOLD}{BLUE}==================================================")
     print(f"  MAESTRO FLOW VALIDATOR")
     print(f"  Target: {target_path}")
@@ -122,6 +194,21 @@ def main():
 
     total_errors = 0
     total_warnings = 0
+
+    for pf in popups_files:
+        p_errors, p_warnings = validate_popups_json(pf)
+        total_errors += len(p_errors)
+        total_warnings += len(p_warnings)
+        if p_errors:
+            print(f"{RED}FAIL{RESET}  {BOLD}{pf}{RESET}")
+            for err in p_errors:
+                print(f"      {RED}✖ Error:{RESET} {err}")
+        elif p_warnings:
+            print(f"{YELLOW}WARN{RESET}  {BOLD}{pf}{RESET}")
+            for wrn in p_warnings:
+                print(f"      {YELLOW}⚠ Warning:{RESET} {wrn}")
+        else:
+            print(f"{GREEN}PASS{RESET}  {pf}")
 
     for f in files:
         rel_path = f.name

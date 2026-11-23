@@ -46,12 +46,9 @@ recorded phase. Never redo a passed gate.
 3. Reproduce on device:
    a. Write the repro line as the first bullet of **Acceptance** in `plans/<TICKET>/flow-bug.md`
       (the ticket's steps → its **expected** result).
-   b. **Author flow**: invoke the `test-author` skill with `plans/<TICKET>/flow-bug.md` to inspect
-      layouts and generate the deterministic Maestro flow (`.maestro/<TICKET>/.../ac-01-repro.yaml` and
-      any necessary `_shared/` helpers).
-   c. **Execute Repro**: run `test-runner` with `-m repro` (executes directly in-process, completes in ~15–20s):
+   b. **Prove & Freeze Repro Flow:** invoke `test-author` (Prove-First via Maestro MCP `inspect_screen` + `run`, then freeze `.maestro/<TICKET>/.../ac-01-repro.yaml` and validate with `validate-flow.py`). The flow asserts the **expected** behaviour, so it fails today (reproduced) and will pass after the fix.
+   c. *(Optional re-check if flow already existed)*: run `test-runner` with `-m repro`:
       `python3 skills/test-runner/scripts/suite-runner.py plans/<TICKET>/flow-bug.md -m repro`
-      The flow asserts the correct behaviour, so it fails today (reproduced) and will pass after the fix.
    d. Record the result under **Root cause**: reproduced / not reproduced (with the data or device
       state tried). A NEEDS-INFO question the device can answer (which value is sent, what the server
       returns) is answered here, not carried to Gate 1.
@@ -178,9 +175,7 @@ Print the push command (with `-o merge_request.create` and target) and the MR te
 
 ## Hard rules
 
-- Every device action (repro, verify) follows the 2-tier pipeline: author via `test-author`
-  (strict ID/text selectors, no coordinate guessing), then execute via `test-runner` with
-  `--open-terminal`. No hand-driven Maestro/adb sessions, no full-screen screenshots.
+- Every device action follows the 2-tier pipeline: new ACs/repro are proved live and frozen via `test-author` (Maestro MCP `inspect_screen` + `run` → standalone `.yaml` + `validate-flow.py`), while existing flows & regression execute via `test-runner` (`suite-runner.py` with `--open-terminal`). No full-screen screenshots on passing steps or raw `adb shell input tap` exploration.
 - The Loop log and MR testing section record only what actually ran. A skipped step is written as
   skipped, with the reason.
 - Never write to Jira; never push; never type credentials or create accounts.

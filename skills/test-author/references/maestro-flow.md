@@ -39,19 +39,16 @@ Never use cryptic single-letter abbreviations like `s3`, `f3`, `s2s4`, `f5`. Fol
 
 `<RUN>` = `<TICKET>` when there is a ticket, else `yyMMdd-<kebab-slug>` (SKILL.md, "Run folder").
 
-## Code-First ID Extraction (Static First, Dynamic Fallback)
+## Prove-First, Freeze-After Authoring
 
-Reading source code to extract IDs is **10× faster** than querying an emulator and costs **~0 device tokens**:
-
-1. **Priority #1 — Static Source Code Scan (~90% of cases):**
-   Run `python3 skills/test-author/scripts/extract-selectors.py [path] -k "<keyword>"` (or grep `res/layout/*.xml` for `android:id="@+id/..."` and `*.kt` for `Modifier.testTag(...)`).
-   - **Found IDs in Code?** → Write the `.yaml` flow files immediately using the extracted bare IDs (`id: "<resource-id>"`) and resolved `strings.xml` text.
-2. **Priority #2 — Dynamic Device Fallback (Only when static scan misses or SDUI):**
-   Only when selectors are not in source code (Server-Driven UI, WebView, system dialogs) or a static selector fails at runtime:
-   - Reach the screen and run `python3 skills/test-runner/scripts/device.py nodes [substr]` to dump runtime IDs once.
-   - Write/update the `.yaml` flow file with the discovered ID.
-3. **Execute in One Continuous CLI Pass (`suite-runner.py`):**
-   Validate with `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/` and hand off to `python3 skills/test-runner/scripts/suite-runner.py .maestro/<RUN>/ -m step`.
+1. **Prove Live First (Maestro MCP):**
+   - Call `mcp__maestro__inspect_screen` once per new screen to grab real runtime `id` / `text` selectors (use `extract-selectors.py` only when a view lacks runtime IDs or you need `strings.xml` copy).
+   - Run the full AC step+assertion snippet in a single `mcp__maestro__run` call and fix any selector mismatch on the spot.
+   - If a random app overlay (user guide, promo, rating) blocks the screen, dismiss it and add a specific rule (`when_visible` + `actions`) to `.maestro/_shared/popups.json` (template: `skills/test-author/templates/popups.json`).
+2. **Freeze Standalone Flows:**
+   - Write each passing AC to `.maestro/<RUN>/<NN-domain>/ac-NN-<slug>.yaml` with a standalone precondition (`launchApp: { clearState: false }` + `_nav/` or inline nav steps) so `suite-runner.py` can run each flow independently.
+3. **Validate Statically:**
+   - Run `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/`. Do not re-run `suite-runner.py` in the same session if ACs just passed via MCP.
 
 ## One flow = one acceptance line
 
