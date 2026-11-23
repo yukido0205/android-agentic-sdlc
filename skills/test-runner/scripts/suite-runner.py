@@ -146,6 +146,8 @@ def setup_lock_cleanup(device_id: str):
     try:
         signal.signal(signal.SIGINT, _sig_handler)
         signal.signal(signal.SIGTERM, _sig_handler)
+        if hasattr(signal, "SIGHUP"):
+            signal.signal(signal.SIGHUP, _sig_handler)
     except Exception:
         pass
 
@@ -893,6 +895,173 @@ def classify_failure(
     return "ASSERTION_FAILED", evidence, []
 
 
+PII_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+PII_BEARER_RE = re.compile(r"(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE)
+PII_JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*\b")
+PII_PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d[\s().-]?){10,14}\d(?!\d)")
+
+
+def _redact_pii(text: str) -> str:
+    if not text:
+        return ""
+    out = PII_EMAIL_RE.sub("<email>", text)
+    out = PII_BEARER_RE.sub(r"\1<redacted>", out)
+    out = PII_JWT_RE.sub("<jwt>", out)
+    out = PII_PHONE_RE.sub("<phone>", out)
+    return out
+
+
+def _select_digest_nodes(nodes: list[dict], error_summary: str, max_nodes: int = 45) -> list[dict]:
+    """Selects up to max_nodes informative UI nodes, prioritizing error matches, overlays, clickables, and tail nodes."""
+    meaningful = [n for n in nodes if n.get("id") or n.get("text") or n.get("desc")]
+    if len(meaningful) <= max_nodes:
+        return meaningful
+
+    hint_tokens = {
+        tok.lower()
+        for tok in re.findall(r"[A-Za-z0-9_./-]{3,}", error_summary or "")
+        if tok.lower() not in {"not", "found", "element", "visible", "timed", "out", "assertion", "failed", "error", "text", "true", "false"}
+    }
+
+    tail_start = max(0, len(meaningful) - 12)
+    buckets: list[list[int]] = [[], [], [], []]
+    for idx, n in enumerate(meaningful):
+        hay = f"{n.get('id', '')} {n.get('text', '')} {n.get('desc', '')}".lower()
+        is_close_hint = bool(
+            SAFE_CLOSE_HINT_RE.match(n.get("text", ""))
+            or SAFE_CLOSE_HINT_RE.match(n.get("desc", ""))
+            or SAFE_CLOSE_ID_RE.search(n.get("id", ""))
+        )
+        is_err_match = any(tok in hay for tok in hint_tokens)
+        if is_close_hint or is_err_match:
+            buckets[0].append(idx)
+        elif n.get("clickable"):
+            buckets[1].append(idx)
+        elif idx >= tail_start:
+            buckets[2].append(idx)
+        else:
+            buckets[3].append(idx)
+
+    chosen_indices: list[int] = []
+    seen: set[int] = set()
+    for bucket in buckets:
+        for idx in bucket:
+            if idx not in seen:
+                seen.add(idx)
+                chosen_indices.append(idx)
+                if len(chosen_indices) >= max_nodes:
+                    break
+        if len(chosen_indices) >= max_nodes:
+            break
+
+    chosen_indices.sort()
+    return [meaningful[i] for i in chosen_indices]
+
+
+def _filter_digest_logcat(logcat_path: str, app_pkg: str, max_lines: int = 25) -> list[str]:
+    if not logcat_path or not os.path.isfile(logcat_path):
+        return []
+    try:
+        raw_lines = [l.rstrip() for l in Path(logcat_path).read_text(encoding="utf-8", errors="ignore").splitlines() if l.strip()]
+    except Exception:
+        return []
+    if not raw_lines:
+        return []
+
+    interesting = [
+        l for l in raw_lines
+        if (
+            "FATAL EXCEPTION" in l
+            or "AndroidRuntime" in l
+            or "ANR in" in l
+            or " E " in l
+            or "E/" in l
+            or "exception" in l.lower()
+            or "error" in l.lower()
+            or (app_pkg and app_pkg != "com.example.app" and app_pkg in l)
+        )
+    ]
+    selected = interesting[-max_lines:] if interesting else raw_lines[-min(10, max_lines):]
+    return [_redact_pii(l) for l in selected]
+
+
+def generate_failure_digest(
+    flow_meta: dict,
+    error_summary: str,
+    artifacts: dict,
+    debug_dir: str,
+    likely_cause: str,
+    app_pkg: str,
+    max_nodes: int = 45,
+    max_log_lines: int = 25,
+) -> str:
+    """Generates a compact 1-read failure digest markdown file (never raises)."""
+    try:
+        os.makedirs(debug_dir, exist_ok=True)
+        ts = dt.datetime.now().strftime("%H%M%S")
+        safe_ac = re.sub(r"[^A-Za-z0-9._-]+", "_", str(flow_meta.get("ac", "flow")))
+        digest_path = os.path.join(debug_dir, f"digest_{safe_ac}_{ts}.md")
+
+        nodes = _parse_xml_nodes(artifacts.get("hierarchy", ""))
+        selected_nodes = _select_digest_nodes(nodes, error_summary, max_nodes=max_nodes)
+        node_lines = []
+        for n in selected_nodes:
+            nid = n.get("id") or "-"
+            ntext = _redact_pii((n.get("text") or "").replace("\n", " "))[:60]
+            ndesc = _redact_pii((n.get("desc") or "").replace("\n", " "))[:40]
+            clk = "Y" if n.get("clickable") else "N"
+            node_lines.append(f'id={nid} | text="{ntext}" | desc="{ndesc}" | clickable={clk} | bounds={n.get("bounds", "")}')
+
+        flow_snippet = ""
+        flow_path = flow_meta.get("path", "")
+        if flow_path and os.path.isfile(flow_path):
+            try:
+                yaml_lines = Path(flow_path).read_text(encoding="utf-8", errors="ignore").splitlines()
+                if len(yaml_lines) > 60:
+                    flow_snippet = "\n".join(yaml_lines[:60]) + f"\n# ... ({len(yaml_lines) - 60} more lines)"
+                else:
+                    flow_snippet = "\n".join(yaml_lines)
+            except Exception:
+                flow_snippet = ""
+
+        log_lines = _filter_digest_logcat(artifacts.get("logcat", ""), app_pkg, max_lines=max_log_lines)
+
+        lines = [
+            f"# Failure Digest — {flow_meta.get('ac', 'FLOW')}: {flow_meta.get('title', '')}",
+            "",
+            f"- **Flow:** `{flow_path}`",
+            f"- **Likely Cause:** `{likely_cause}`",
+            f"- **Focus Window:** `{artifacts.get('focus_window') or 'unknown'}`",
+            f"- **Raw Artifacts:** screenshot=`{artifacts.get('screenshot') or 'none'}`, hierarchy=`{artifacts.get('hierarchy') or 'none'}`, logcat=`{artifacts.get('logcat') or 'none'}`",
+            "",
+            "## Maestro Error",
+            "```text",
+            _redact_pii(error_summary or "Assertion failed or element missing."),
+            "```",
+            "",
+            "## Flow YAML",
+            "```yaml",
+            flow_snippet or "# (unavailable)",
+            "```",
+            "",
+            f"## Visible UI Nodes (prioritized: {len(selected_nodes)} of {len(nodes)})",
+            "```text",
+            "\n".join(node_lines) if node_lines else "(no UI hierarchy captured)",
+            "```",
+            "",
+            f"## Filtered Logcat ({len(log_lines)} lines)",
+            "```text",
+            "\n".join(log_lines) if log_lines else "(no relevant logcat lines captured)",
+            "```",
+            "",
+        ]
+        with open(digest_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        return digest_path
+    except Exception:
+        return ""
+
+
 def generate_issue_report(flow_meta, error_msg, artifacts, issues_dir, likely_cause="ASSERTION_FAILED"):
     """Creates a markdown defect report matching issue-report-template.md immediately."""
     os.makedirs(issues_dir, exist_ok=True)
@@ -911,11 +1080,14 @@ def generate_issue_report(flow_meta, error_msg, artifacts, issues_dir, likely_ca
     screenshot = artifacts.get("screenshot", "")
     hierarchy = artifacts.get("hierarchy", "")
     logcat = artifacts.get("logcat", "")
+    digest = artifacts.get("digest", "")
     focus_window = artifacts.get("focus_window", "")
 
     evidence_parts = [f"- Likely Cause: `{likely_cause}`"]
     if focus_window:
         evidence_parts.append(f"- Focus Window: `{focus_window}`")
+    if digest:
+        evidence_parts.append(f"- Failure Digest (1-read): `{digest}`")
     if screenshot:
         evidence_parts.append(f"- Screenshot: `{screenshot}`")
     if hierarchy:
@@ -1075,6 +1247,85 @@ def write_token_report(out_dir, track_enabled=True):
 USER_HEADLESS_INTENT_RE = re.compile(r"(--headless|--no-terminal|\bheadless\b|\bno[- ]terminal\b)", re.IGNORECASE)
 
 
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return False
+
+
+def _wait_for_terminal_child(
+    sentinel_path: str,
+    pid_path: str,
+    result_path: str,
+    timeout_s: float = 3600.0,
+    startup_grace_s: float = 20.0,
+    poll_interval_s: float = 0.5,
+) -> tuple[int, str, bool]:
+    """Blocks until the external Terminal child writes sentinel_path or exits unexpectedly.
+
+    Returns (exit_code, result_text, child_started).
+    """
+    start = time.time()
+    child_pid = None
+    child_started = False
+
+    try:
+        while True:
+            if os.path.isfile(sentinel_path):
+                child_started = True
+                break
+
+            if child_pid is None and os.path.isfile(pid_path):
+                try:
+                    raw_pid = Path(pid_path).read_text(encoding="utf-8").strip()
+                    if raw_pid.isdigit():
+                        child_pid = int(raw_pid)
+                        child_started = True
+                except Exception:
+                    pass
+
+            elapsed = time.time() - start
+            if not child_started and elapsed >= startup_grace_s:
+                return 1, "⚠️ External Terminal runner did not start within startup grace period.", False
+
+            if child_pid is not None and not _pid_is_alive(child_pid):
+                # Brief grace for EXIT trap to flush sentinel file
+                time.sleep(min(0.5, poll_interval_s))
+                if os.path.isfile(sentinel_path):
+                    break
+                return 130, "⚠️ External Terminal window closed or process terminated before completion.", True
+
+            if elapsed >= timeout_s:
+                return 124, f"⚠️ Timed out waiting for external Terminal runner after {int(timeout_s)}s.", child_started
+
+            time.sleep(poll_interval_s)
+    except KeyboardInterrupt:
+        return 130, "⚠️ Wait interrupted (Ctrl+C). External Terminal run may still be active.", child_started
+
+    rc = 1
+    try:
+        raw_rc = Path(sentinel_path).read_text(encoding="utf-8").strip()
+        if raw_rc.lstrip("-").isdigit():
+            rc = int(raw_rc)
+    except Exception:
+        pass
+
+    result_text = ""
+    if os.path.isfile(result_path):
+        try:
+            result_text = Path(result_path).read_text(encoding="utf-8", errors="ignore").strip()
+        except Exception:
+            pass
+
+    return rc, result_text, True
+
+
 def _user_requested_headless():
     """Returns True if the user's latest chat prompt explicitly requested --headless / --no-terminal,
     False if the user prompt did not request it, or None if no session transcript is active."""
@@ -1180,6 +1431,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--open-terminal", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--new-terminal", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-wait", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_terminal-child", dest="terminal_child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-token-track", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-device-lock", action="store_true", help=argparse.SUPPRESS)
@@ -1230,8 +1482,8 @@ def main():
         if not args.headless and not args.terminal_child and not args.open_terminal:
             args.open_terminal = True
     elif mode == "step":
-        if args.fail_fast is None:
-            args.fail_fast = 1
+        # Run all flows in a step by default so every failure surfaces in one pass
+        # (callers can still pass `--fail-fast 1` explicitly).
         if not args.headless and not args.terminal_child and not args.open_terminal:
             args.open_terminal = True
     elif mode == "smoke":
@@ -1326,7 +1578,8 @@ def main():
     track_tokens = not args.no_token_track
     token_start_warnings = start_token_tracking(track_tokens)
 
-    # If --open-terminal is requested, spawn or reuse an external Terminal window on macOS and exit
+    # If --open-terminal is requested, spawn or reuse an external Terminal window on macOS
+    # and block-wait for completion (unless --no-wait is passed) so callers never poll progress.log.
     if args.open_terminal:
         # Build child arguments using internal --_terminal-child to prevent recursive window spawns
         # Omit --install and --apk since APK was already installed onto the locked device above
@@ -1337,7 +1590,7 @@ def main():
             if skip_next:
                 skip_next = False
                 continue
-            if a in ("--open-terminal", "--new-terminal", "--headless", "--no-terminal"):
+            if a in ("--open-terminal", "--new-terminal", "--no-wait", "--headless", "--no-terminal"):
                 continue
             if a in ("--apk",):
                 skip_next = True
@@ -1369,6 +1622,7 @@ def main():
         run_time = dt.datetime.now().strftime("%H:%M:%S")
         divider = "═" * 70
         monitor_title = f"Test Monitor [{device_id}]"
+        wait_for_child = not args.no_wait
         with tempfile.NamedTemporaryFile(
             mode="w",
             dir="/tmp",
@@ -1378,8 +1632,25 @@ def main():
             encoding="utf-8",
         ) as tf:
             launcher_path = tf.name
+            sentinel_path = f"{launcher_path}.done"
+            pid_path = f"{launcher_path}.pid"
+            result_path = f"{launcher_path}.result"
             tf.write("#!/usr/bin/env bash\n")
-            tf.write(f"trap 'rm -f {shlex.quote(launcher_path)}' EXIT\n")
+            if wait_for_child:
+                tf.write(f"SENTINEL={shlex.quote(sentinel_path)}\n")
+                tf.write(f"PIDFILE={shlex.quote(pid_path)}\n")
+                tf.write("CHILD_RC=130\n")
+                tf.write("_cleanup() {\n")
+                tf.write("  local rc=$?\n")
+                tf.write('  if [ ! -f "$SENTINEL" ]; then\n')
+                tf.write('    printf \'%s\\n\' "${CHILD_RC:-$rc}" > "$SENTINEL"\n')
+                tf.write("  fi\n")
+                tf.write(f'  rm -f {shlex.quote(launcher_path)} "$PIDFILE"\n')
+                tf.write("}\n")
+                tf.write("trap '_cleanup' EXIT INT TERM HUP\n")
+                tf.write('echo $$ > "$PIDFILE"\n')
+            else:
+                tf.write(f"trap 'rm -f {shlex.quote(launcher_path)}' EXIT\n")
             tf.write(f"printf '\\033]0;%s\\007' {shlex.quote(monitor_title)}\n")
             tf.write("clear\n")
             tf.write(
@@ -1387,11 +1658,17 @@ def main():
                 f"{shlex.quote(divider)} {shlex.quote(run_time)} {shlex.quote(device_id)} "
                 f"{shlex.quote(str(args.target))} {shlex.quote(divider)}\n"
             )
+            if wait_for_child:
+                tf.write(f"export MAESTRO_SUITE_RESULT_FILE={shlex.quote(result_path)}\n")
             tf.write("export MAESTRO_TOKEN_MARK_INHERITED=1\n")
             tf.write(f"export ANDROID_SERIAL={shlex.quote(device_id)}\n")
             tf.write(f'export PATH={shlex.quote(f"{PLATFORM_TOOLS}:{MAESTRO_BIN_DIR}")}:"$PATH"\n')
-            tf.write(f"cd {shlex.quote(cwd)} || exit 1\n")
+            tf.write(f"cd {shlex.quote(cwd)} || {{ CHILD_RC=1; exit 1; }}\n")
             tf.write(f"{child_cmd}\n")
+            if wait_for_child:
+                tf.write("CHILD_RC=$?\n")
+                tf.write('printf \'%s\\n\' "$CHILD_RC" > "$SENTINEL"\n')
+                tf.write('exit "$CHILD_RC"\n')
         os.chmod(launcher_path, 0o700)
 
         launch_cmd = f"bash {shlex.quote(launcher_path)}"
@@ -1476,18 +1753,41 @@ def main():
                 print(f"Warning: Could not launch Terminal window ({e}). Running in current process instead...")
 
         if not launched:
-            try:
-                os.unlink(launcher_path)
-            except OSError:
-                pass
+            for p_tmp in (launcher_path, sentinel_path, pid_path, result_path):
+                try:
+                    os.unlink(p_tmp)
+                except OSError:
+                    pass
         else:
             lock_handed_off = True
             reused_str = "reused existing" if not args.new_terminal else "new window"
-            print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str}) [{monitor_title}]!")
-            print(f"👉 Command executing: {child_cmd}")
-            print("⏳ Tests are now running live in the external Terminal window.")
-            print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.")
-            return 0
+            print(f"🚀 Successfully launched live monitor in external Terminal ({reused_str}) [{monitor_title}]!", flush=True)
+            print(f"👉 Command executing: {child_cmd}", flush=True)
+            if not wait_for_child:
+                print("⏳ Tests are now running live in the external Terminal window (--no-wait).", flush=True)
+                print("⛔ DO NOT re-run with --headless. Wait for `🏁 COMPLETED` in the progress log.", flush=True)
+                return 0
+
+            print("⏳ Waiting for external Terminal run to finish (do not poll progress.log)...", flush=True)
+            wait_timeout = float(os.environ.get("SUITE_RUNNER_WAIT_TIMEOUT", "3600"))
+            child_rc, result_text, child_started = _wait_for_terminal_child(
+                sentinel_path,
+                pid_path,
+                result_path,
+                timeout_s=wait_timeout,
+            )
+            for p_tmp in (sentinel_path, pid_path, result_path):
+                try:
+                    os.unlink(p_tmp)
+                except OSError:
+                    pass
+            if not child_started:
+                lock_handed_off = False
+                if enable_lock:
+                    release_device_lock(device_id)
+            if result_text:
+                print("\n" + result_text, flush=True)
+            return child_rc
 
     # For in-process or terminal-child runs, ensure lock is refreshed with current PID and cleanup registered
     if enable_lock:
@@ -1539,6 +1839,7 @@ def main():
     is_tty = sys.stdout.isatty()
     current_step = ""
     interrupted = False
+    failed_summaries: list[str] = []
 
     # ANSI color codes for rich live Terminal streaming
     CLR_LINE = "\033[2K\r"
@@ -1647,6 +1948,17 @@ def main():
                     args.app_pkg,
                 )
 
+                digest_path = generate_failure_digest(
+                    flow,
+                    run_res["error_summary"],
+                    artifacts,
+                    debug_dir,
+                    likely_cause=likely_cause,
+                    app_pkg=args.app_pkg,
+                )
+                if digest_path:
+                    artifacts["digest"] = digest_path
+
                 log_line = f"{step_prefix}[{idx:03d}/{total:03d}] ❌ {ac}: {title} - FAILED [{likely_cause}] [{duration_s}s]"
                 if is_tty:
                     print(f"{CLR_LINE}{C_RED}{log_line}{C_RESET}", flush=True)
@@ -1656,6 +1968,8 @@ def main():
                 print(f"          ├── 🔎 Likely Cause: {likely_cause}")
                 for ev in evidence_lines:
                     print(f"          ├── {ev}")
+                if digest_path:
+                    print(f"          ├── 📄 Digest (1-read): {digest_path}")
                 if artifacts.get("screenshot"):
                     print(f"          ├── 📸 Snapshot: {artifacts['screenshot']}")
                 if artifacts.get("hierarchy"):
@@ -1670,6 +1984,13 @@ def main():
                 else:
                     issue_path = generate_issue_report(flow, run_res["error_summary"], artifacts, str(issues_dir), likely_cause=likely_cause)
                     print(f"          └── 📝 ISSUE LOGGED: {issue_path}", flush=True)
+
+                fail_summary_parts = [f"❌ {ac}: {title} [{likely_cause}]"]
+                if digest_path:
+                    fail_summary_parts.append(f"digest={digest_path}")
+                if issue_path:
+                    fail_summary_parts.append(f"issue={issue_path}")
+                failed_summaries.append(" | ".join(fail_summary_parts))
 
                 cp_entry = {
                     "status": "FAILED",
@@ -1738,12 +2059,28 @@ def main():
     print(f"📊 Summary report: {summary_md_path}")
     token_line = write_token_report(out_dir, track_tokens)
 
-    # The session waits on this file, not on stdout: with --open-terminal stdout is another window.
+    # Write final progress log lines and optional parent-waiter result summary
     with open(progress_log, "a", encoding="utf-8") as f:
         if token_line:
             f.write(f"{token_line}\n")
         f.write(f"{final_banner}\n")
         f.write(f"📊 Summary report: {summary_md_path}\n")
+
+    result_file = os.environ.get("MAESTRO_SUITE_RESULT_FILE")
+    if result_file:
+        try:
+            summary_lines = [final_banner]
+            if failed_summaries:
+                summary_lines.append("Failed flows (1-read digest first):")
+                summary_lines.extend(f"  - {line}" for line in failed_summaries)
+            summary_lines.append(f"📊 Summary report: {summary_md_path}")
+            summary_lines.append(f"📜 Progress log: {progress_log}")
+            if token_line:
+                summary_lines.append(token_line)
+            Path(result_file).write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
+        except Exception:
+            pass
+
     if enable_lock:
         release_device_lock(device_id)
     if interrupted:

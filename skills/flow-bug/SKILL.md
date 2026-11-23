@@ -43,13 +43,14 @@ recorded phase. Never redo a passed gate.
    DIAGNOSIS, including `Files this fix touches`. On NEEDS-INFO, carry its questions to Gate 1 and
    re-spawn it with the answers. **At most 2 NEEDS-INFO rounds**: still unclear after round 2 →
    list what is unknown and stop. Never fix blind.
-3. Reproduce on device:
+3. Reproduce on device (**Clean-Context Subagent** when not inside a `flow-queue` worker; inline fallback otherwise):
    a. Write the repro line as the first bullet of **Acceptance** in `plans/<TICKET>/flow-bug.md`
       (the ticket's steps → its **expected** result).
-   b. **Prove & Freeze Repro Flow:** invoke `test-author` (Prove-First via Maestro MCP `inspect_screen` + `run`, then freeze `.maestro/<TICKET>/.../ac-01-repro.yaml` and validate with `validate-flow.py`). The flow asserts the **expected** behaviour, so it fails today (reproduced) and will pass after the fix.
+   b. **Prove & Freeze Repro Flow:** delegate to **1 ephemeral clean-context test subagent** (scoped strictly to `.maestro/**` + Maestro MCP / `validate-flow.py` / `suite-runner.py`; pass only ticket ID, repro AC bullet, and `.maestro/<TICKET>/` path) to run `test-author` (Prove-First via Maestro MCP `inspect_screen` + batched `run`, never `adb shell uiautomator dump`, then freeze `.maestro/<TICKET>/.../ac-01-repro.yaml` and validate with `validate-flow.py`). The flow asserts the **expected** behaviour, so it fails today (reproduced) and will pass after the fix.
    c. *(Optional re-check if flow already existed)*: run `test-runner` with `-m repro`:
       `python3 skills/test-runner/scripts/suite-runner.py plans/<TICKET>/flow-bug.md -m repro`
-   d. Record the result under **Root cause**: reproduced / not reproduced (with the data or device
+      *(block-waits for external Terminal summary — never poll `progress.log`; read `debug/digest_*.md` on failure).*
+   d. Record the compact subagent result under **Root cause**: reproduced / not reproduced (with the data or device
       state tried). A NEEDS-INFO question the device can answer (which value is sent, what the server
       returns) is answered here, not carried to Gate 1.
 4. Pick the track and record it in the state file:
@@ -108,18 +109,17 @@ Show: the repro result, root cause (≤6 bullets), the track and why, **Blast Ra
 
 Repeat until a round keeps no finding (max 3 rounds; a 4th needs the user):
 
-1. Device:
+1. Device (**Clean-Context Subagent** when not inside a `flow-queue` worker; inline fallback otherwise):
    a. Add the regression plan's lines to **Acceptance** (once) in `plans/<TICKET>/flow-bug.md`.
-   b. **Author new flows**: if regression lines add new test cases not yet in `.maestro/<TICKET>/`,
-      invoke `test-author` to generate them. Existing flows are re-run, not rewritten.
-   c. Install this branch, then execute the regression suite with `test-runner` in regression mode (spawns live monitoring Terminal, 0 LLM token cost):
-      `python3 skills/test-runner/scripts/suite-runner.py plans/<TICKET>/flow-bug.md -m regression`
-   d. AC-1 (the repro) must now pass; all regression flows must also pass.
-   e. **Negative control** — each line added for this ticket that guards new behaviour (not a line
+   b. Build the debug APK (`./gradlew assembleDebug` or `gradle-build.py` in `.worktrees/`), then delegate device execution to **1 ephemeral clean-context test subagent** (pass only ticket ID, Acceptance bullets, `.maestro/<TICKET>/`, and `--install`; strict write scope `.maestro/**` only — never edit app source code; return a ≤15-line pass/fail table + `debug/digest_*.md` / `issues/NN-*.md` paths):
+      - **New regression ACs without frozen flows:** prove live via `test-author` (Maestro MCP → freeze standalone `.yaml` + `validate-flow.py`; never `adb shell uiautomator dump`).
+      - **Existing flows & regression:** run `python3 skills/test-runner/scripts/suite-runner.py plans/<TICKET>/flow-bug.md -m regression --install` (block-waits for Terminal completion — never poll `progress.log`; on failure read `debug/digest_<ac>_<ts>.md` in 1 call and fix up to 2 selector/overlay issues before returning genuine app failures to the main agent).
+   c. AC-1 (the repro) must now pass; all regression flows must also pass.
+   d. **Negative control** — each line added for this ticket that guards new behaviour (not a line
       that checks an adjacent flow is unchanged) runs once on unfixed code: the base build, or the
       fix reverted locally and restored right after (check `git diff`). It must fail at its check,
       not at its precondition. Log both runs. A unit test for new behaviour gets the same treatment.
-   f. New device flows: a precondition and the check fail with different messages, and no
+   e. New device flows: a precondition and the check fail with different messages, and no
       precondition depends on timing. Hold the state deterministically (fixture, offline, paused
       loader) instead of racing an animation, a network call or a timer.
 2. Review, in three parts:
@@ -169,7 +169,7 @@ Print the push command (with `-o merge_request.create` and target) and the MR te
 ## Phase 5 — Review feedback (after Gate 3)
 
 1. Check each comment against the code before accepting it; log valid / invalid (why) in the Loop log.
-2. Valid → fix, test, negative control (Phase 3 step 1e), re-run the affected flows, then a new commit
+2. Valid → fix, test, negative control (Phase 3 step 1d), re-run the affected flows, then a new commit
    (not an amend) and updated MR testing lines.
 3. Retro (Phase 4 step 4).
 

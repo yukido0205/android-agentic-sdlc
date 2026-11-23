@@ -85,13 +85,17 @@ Wait for user decision. Record user response under **Decision & Step Ladder**.
 
 Repeat until a round keeps no finding (max 3 rounds):
 
-1. **Device Execution (Parallel-Safe):**
-   - **First pass (no frozen flows yet):** Prove ACs live via `test-author` (Maestro MCP `inspect_screen` + `run`), register any random app overlays in `.maestro/_shared/popups.json`, freeze standalone `.maestro/<TICKET>/.../ac-NN-<slug>.yaml` flows, and validate with `validate-flow.py`. (Do not re-run `suite-runner.py` in the same round if ACs just passed via MCP.)
+1. **Device Execution (Clean-Context Subagent & Parallel-Safe):**
+   - **Isolate Device Testing in 1 Ephemeral Subagent (Default):** After Phase 2 coding/build, the main session carries heavy codebase history. Delegate the entire device step (first pass or re-run, including up to 2 selector/overlay fixes) to **one** ephemeral clean-context subagent so device tool calls do not re-read main-session history.
+     - *Pass only:* ticket ID, the AC bullets from `plans/<TICKET>/flow-task.md`, `.maestro/<TICKET>/` path, whether frozen flows already exist, device ID (if known), and whether `--install` is needed.
+     - *Strict subagent scope:* may only read/write `.maestro/**` and run Maestro MCP / `validate-flow.py` / `suite-runner.py`. **Never touch production source files** (return genuine `ASSERTION_FAILED` / `APP_CRASH_OR_ANR` failures to the main agent with `debug/digest_*.md` + `issues/NN-*.md` paths).
+     - *Inline fallback:* if already running inside a `flow-queue` worker / nested subagent (e.g., `.worktrees/<TICKET>` where subagent nesting is unavailable), execute the exact same steps inline.
+   - **First pass (no frozen flows yet):** Prove ACs live via `test-author` (Maestro MCP `inspect_screen` at most once per new screen + batched `run`; never `adb shell uiautomator dump`), register any random app overlays in `.maestro/_shared/popups.json`, freeze standalone `.maestro/<TICKET>/.../ac-NN-<slug>.yaml` flows, and validate with `validate-flow.py`. (Do not re-run `suite-runner.py` in the same round if ACs just passed via MCP.)
    - **Re-runs / subsequent rounds / regression:** Execute frozen flows via `test-runner` with `--install`:
      ```bash
      python3 skills/test-runner/scripts/suite-runner.py .maestro/<TICKET>/ -m step --install
      ```
-     *(Auto-leases idle emulator via mutex lock, sets `ANDROID_SERIAL`, installs APK exclusively to locked device, and streams live ANSI terminal).*
+     *(Auto-leases idle emulator via mutex lock, sets `ANDROID_SERIAL`, installs APK exclusively to locked device, streams live ANSI terminal, and block-waits until completion — never poll `progress.log`. On failure, read `debug/digest_<ac>_<ts>.md` in 1 call).*
    - AC-01 through AC-n must pass.
    - **Negative Control:** For safety guards, verify failure on invalid state or inverted condition.
 2. **Review & Diff Audit:**

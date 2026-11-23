@@ -74,8 +74,8 @@ Rules:
 
 ## Execution & Debugging
 
-- **Standard Execution (Always Preferred):** Run authored YAML files in one continuous pass via `suite-runner.py`:
+- **Standard Execution (Always Preferred):** Run frozen YAML files in one continuous pass via `suite-runner.py` (`-m step` runs all flows in the step by default and block-waits for the external Terminal summary):
   ```bash
   python3 skills/test-runner/scripts/suite-runner.py .maestro/<RUN>/ -m step
   ```
-- **Fallback Interactive Debugging (Maestro MCP):** Only when fixing a stubborn single flow where static selectors and `suite-runner.py` failure logs aren't enough, you may test inline steps with MCP `run` (`device_id` from `list_devices`), then persist to `.maestro/<RUN>/ac-<n>.yaml` and re-verify via `suite-runner.py`.
+- **1-Read Failure Triage:** When a flow fails in `suite-runner.py`, read its generated `debug/digest_<ac>_<ts>.md` first (contains `LIKELY_CAUSE`, focus window, error, YAML, prioritized UI nodes, and filtered logcat). If `BLOCKED_BY_OVERLAY` or `SELECTOR_NOT_FOUND` needs live confirmation, use **at most 1–2 MCP calls** (`inspect_screen` — never `adb shell uiautomator dump` while Maestro is active), update `.maestro/_shared/popups.json` or the YAML selector, and resume with `suite-runner.py <target> --resume --no-reset`.

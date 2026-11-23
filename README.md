@@ -20,7 +20,7 @@ When AI agents are dropped into real-world Android codebases without mobile-spec
 | **Monolithic PRs & Context Rot** | Plans an entire epic in one session, hallucinating file paths and producing 2,000+ line PRs. | **`/plan-slicing`** enforces **3-Tier JIT Slicing** across isolated `/clear` sessions—capping every step MR at **$\le 300$ lines**. |
 | **Tangled Android Architecture** | Mixes `Context`, `SharedPreferences`, and UI state inside 1,500-line ViewModels; forgets Clean Architecture rules mid-chat. | **`/code-domain`** extracts pure Kotlin UseCases, while **`pre-tool-guard.py`** mechanically blocks `import android.*` in `/domain/`. |
 | **Trial-and-Error Bug Fixing** | Immediately mutates code based on superficial stack-trace guesses, causing silent regressions elsewhere. | **`/test-hunter`** (strictly read-only) diagnoses root cause first; **`/guard-blast`** locks an explicit **Allowlist** of editable files. |
-| **Flaky E2E Tests & Token Bleed** | Writes hardcoded `point: x, y` taps and runs Maestro via raw LLM tool calls, burning 100k+ tokens per suite. | **`/test-author`** enforces semantic selectors; **`suite-runner.py`** streams live ANSI device tests natively at **0 LLM token bleed**. |
+| **Flaky E2E Tests & Token Bleed** | Writes hardcoded `point: x, y` taps, polls logs in loops, and runs tests inside bloated coding sessions, burning millions of cached tokens. | **`/test-author`** proves ACs live via Maestro MCP then freezes semantic YAML; **`suite-runner.py`** block-waits with live ANSI streaming, 1-read failure digests, and clean-context test subagents in `/flow-*`. |
 
 ### Four Core Engineering Pillars
 
@@ -74,8 +74,8 @@ LLMs can forget instructions when context grows; Python scripts do not. Executes
 | **`code-domain`** | `skills/code-domain` | `/code-domain <file>` | Code (Domain) | Extracts pure Kotlin business logic into UseCases/Entities with zero Android framework dependencies. |
 | **`test-hunter`** | `skills/test-hunter` | `/test-hunter <ticket\|log>` | Test (Diagnosis) | Strictly read-only root cause investigator. Produces diagnostic reports without modifying code. |
 | **`guard-blast`** | `skills/guard-blast` | `/guard-blast <target>` | Guard (Safety) | Computes Blast Radius, locks down an Allowlist of editable files, and derives targeted Regression Matrices. |
-| **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Authoring) | Authors deterministic, semantic Maestro YAML test flows validated by `validate-flow.py`. |
-| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` or CLI | Test (Execution) | High-volume test runner with live ANSI terminal streaming, failure snapshots, and 0-token-bleed presets. |
+| **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Authoring) | Proves ACs live via Maestro MCP (`inspect_screen` + batched `run`), then freezes standalone semantic YAML flows validated by `validate-flow.py`. |
+| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` or CLI | Test (Execution) | High-volume suite runner with block-waiting live ANSI terminal, safe overlay triage, 1-read failure digests, and 0-token-bleed presets. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Orchestration) | Complete bug lifecycle orchestrator (Understand $\to$ Fix $\to$ Prove $\to$ Ship) with 3 human review gates. |
 | **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Orchestration) | Standalone sprint task orchestrator (Understand $\to$ Build $\to$ Prove $\to$ Ship) without an upfront contract. |
 | **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Multi-Task) | Single-chat multi-agent orchestrator with isolated worktrees and batched Gate approvals. |

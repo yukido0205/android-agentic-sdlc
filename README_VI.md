@@ -20,7 +20,7 @@ Khi đưa các AI Agent thông thường vào dự án Android thực tế mà k
 | **PR khổng lồ & Loãng ngữ cảnh** | Quét cả Epic trong 1 phiên chat, bị ảo giác (hallucination) và tạo ra PR dài hơn 2.000 dòng. | **`/plan-slicing`** áp dụng **Quy hoạch cuốn chiếu 3 tầng (JIT)** qua các phiên `/clear` độc lập—ép mỗi MR **$\le 300$ dòng code**. |
 | **Kiến trúc Android rối rắm** | Trộn lẫn `Context`, `SharedPreferences` và UI state trong ViewModel 1.500 dòng; quên sạch rule Clean Architecture khi chat dài. | **`/code-domain`** bóc tách UseCase thuần Kotlin, đồng thời **`pre-tool-guard.py`** chặn cơ học mọi lệnh `import android.*` trong `/domain/`. |
 | **Sửa bug kiểu "thử và sai"** | Vừa đọc stack trace đã vội sửa code theo phỏng đoán, làm phát sinh lỗi ngầm ở các module khác. | **`/test-hunter`** (chỉ đọc) điều tra nguyên nhân gốc trước; **`/guard-blast`** khóa cứng danh sách file được phép chạm vào (**Allowlist**). |
-| **Test UI chập chờn & Đốt token** | Dùng tọa độ chạm cứng (`point: x, y`) và gọi Maestro liên tiếp qua LLM làm bốc hơi hàng trăm nghìn token. | **`/test-author`** ép dùng selector ngữ nghĩa; **`suite-runner.py`** chạy test trực tiếp bằng Python, stream ANSI live với **0 token LLM bị lãng phí**. |
+| **Test UI chập chờn & Đốt token** | Dùng tọa độ chạm cứng (`point: x, y`), lặp polling log và chạy test ngay trong phiên code nặng context, đốt hàng triệu token. | **`/test-author`** prove AC trực tiếp qua Maestro MCP rồi đóng băng YAML ngữ nghĩa; **`suite-runner.py`** block-wait stream ANSI live, xuất 1-read failure digest, và tách subagent sạch context trong `/flow-*`. |
 
 ### 4 Triết Lý Kỹ Thuật Cốt Lõi (Core Design Pillars)
 
@@ -74,8 +74,8 @@ LLM có thể quên lời dặn khi hội thoại dài ra, nhưng script Python 
 | **`code-domain`** | `skills/code-domain` | `/code-domain <file>` | Code (Domain) | Bóc tách logic nghiệp vụ thành các UseCase/Entity pure Kotlin, hoàn toàn không dính Android SDK. |
 | **`test-hunter`** | `skills/test-hunter` | `/test-hunter <ticket\|log>` | Test (Chẩn đoán) | Chuyên gia điều tra nguyên nhân gốc (chỉ đọc — không sửa code). Xuất báo cáo `DIAGNOSIS`. |
 | **`guard-blast`** | `skills/guard-blast` | `/guard-blast <target>` | Guard (An toàn) | Tính toán Blast Radius, khóa chặt danh sách file được sửa (Allowlist) và lập ma trận regression. |
-| **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Soạn thảo) | Viết kịch bản test Maestro YAML chuẩn ngữ nghĩa, kiểm tra tĩnh qua `validate-flow.py`. |
-| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test quy mô lớn, stream live ANSI ra terminal, chụp màn hình lỗi và 0 tốn token khi pass. |
+| **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Soạn thảo) | Prove AC trực tiếp trên máy qua Maestro MCP (`inspect_screen` + gom bước `run`), sau đó đóng băng thành YAML độc lập và kiểm tra bằng `validate-flow.py`. |
+| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` hoặc CLI | Test (Thực thi) | Bộ chạy test quy mô lớn, stream live ANSI kèm block-wait, phân loại overlay an toàn, xuất 1-read failure digest và 0 tốn token khi pass. |
 | **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Nhạc trưởng) | Điều phối toàn diện vòng đời bug (Hiểu $\to$ Sửa $\to$ Chứng minh $\to$ Ship), người chỉ duyệt 3 cổng. |
 | **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Nhạc trưởng) | Điều phối trọn gói task tính năng/cải tiến lẻ giữa sprint không cần CONTRACT.md, chỉ duyệt 3 cổng. |
 | **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Đa Tác Vụ) | Điều phối nhiều task trên 1 chat với worktree cô lập và gom duyệt Gate tập trung. |

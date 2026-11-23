@@ -87,17 +87,19 @@ flowchart TD
 3. If flows for these ACs **already exist** on disk, stop authoring and run them via `suite-runner.py` instead.
 
 ### Step 2: Live Prove-First via Maestro MCP (Low-Call Budget)
-Run ACs sequentially on the live warm device using `mcp__maestro__inspect_screen` and `mcp__maestro__run`:
-* **Screen Inspection Limit:** Call `inspect_screen` **at most once per new screen** to get runtime `id` / `text` selectors. Only grep source code (`extract-selectors.py` / `Grep`) when a view lacks a runtime ID or you need exact `strings.xml` error copy.
-* **Batch Steps:** Put an entire AC's interaction + assertion sequence into **one `mcp__maestro__run` call** instead of tapping step-by-step.
+Run ACs sequentially on the live warm device using `mcp__maestro__inspect_screen` and `mcp__maestro__run`. Every model call re-reads the full conversation context, so **call count is the primary cost driver**:
+* **Never run `adb shell uiautomator dump` during a Maestro session:** Maestro holds Android's `UiAutomation` accessibility service, so `uiautomator dump` reliably fails and wastes turns. Always use `mcp__maestro__inspect_screen` to inspect the live screen.
+* **Screen Inspection Limit:** Call `inspect_screen` **at most once per newly visited screen** to get runtime `id` / `text` selectors. Only grep source code (`extract-selectors.py` / `Grep`) when a view lacks a runtime ID or you need exact `strings.xml` error copy.
+* **Batch Steps per AC:** Put an entire AC's interaction + assertion sequence (e.g., open sheet → select option → confirm → assert) into **one `mcp__maestro__run` call** instead of tapping step-by-step.
 * **Fix In-Place:** If a selector or step fails, inspect once, adjust the YAML snippet, and re-run that single snippet immediately (~2–5s).
 * **Random Overlays / Popups:** If an unexpected app overlay (user guide, promo, rating, tooltip) appears during MCP testing, dismiss it to continue AND append a safe rule (`when_visible` + `actions`) to `.maestro/_shared/popups.json` (see `skills/test-author/templates/popups.json`). Never use overly broad selectors like `OK` or `.*close.*`.
 
 ### Step 3: Freeze Passing Flows to Disk (Batch Write)
-Once all ACs have passed live, freeze the exact working YAML snippets into `.maestro/<EPIC>/<NN-domain>/ac-NN-<slug>.yaml` in 1–2 `Write` calls:
+Once all ACs have passed live, freeze the exact working YAML snippets into `.maestro/<EPIC>/<NN-domain>/ac-NN-<slug>.yaml` in **batched/parallel `Write` calls** and run `validate-flow.py` once:
 * **Standalone Precondition Rule (Mandatory):** Because MCP ran on a warm state, every frozen `ac-NN-*.yaml` **MUST** be standalone from app launch or a shared `_nav/` subflow (`launchApp: { clearState: false }` + navigation steps proved in AC-01) so `suite-runner.py` can execute any flow independently later.
+* **Self-Contained Flags / Environment State:** Never leave frozen flows dependent on manual pre-toggled device state (feature flags, experiment variants, mock switches). Put project-specific setup/teardown helpers in `.maestro/_shared/` (e.g., `_enable-flag.yaml` / `_reset-flag.yaml`) and invoke them from the flow. Note that `launchApp.arguments` / intent extras can behave inconsistently across Android API levels (e.g., API 33 vs API 36, or when an app persists a dev setting on launch #1 and only applies it on cold start #2) — prefer whatever launch/flag mechanism is proven on the target device.
 * **Keep Helpers Minimal:** Only extract `.maestro/<EPIC>/_shared/` or `.maestro/_nav/` helpers when ≥2 flows share the exact same setup/navigation sequence.
-* **Verify Before Reporting:** Never report ACs as frozen until all `.yaml` files are written and validated.
+* **Verify & Report Concisely:** Never report ACs as frozen until all `.yaml` files are written and validated; keep the final summary brief (table/bullets).
 
 ### Step 4: Static Validation (End of Authoring Session)
 Always run the static validator before finishing:

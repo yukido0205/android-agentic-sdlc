@@ -42,13 +42,15 @@ Never use cryptic single-letter abbreviations like `s3`, `f3`, `s2s4`, `f5`. Fol
 ## Prove-First, Freeze-After Authoring
 
 1. **Prove Live First (Maestro MCP):**
-   - Call `mcp__maestro__inspect_screen` once per new screen to grab real runtime `id` / `text` selectors (use `extract-selectors.py` only when a view lacks runtime IDs or you need `strings.xml` copy).
-   - Run the full AC step+assertion snippet in a single `mcp__maestro__run` call and fix any selector mismatch on the spot.
+   - **Never run `adb shell uiautomator dump`** while Maestro is active (Maestro holds Android's `UiAutomation` service so `uiautomator dump` always fails). Always use `mcp__maestro__inspect_screen`.
+   - Call `mcp__maestro__inspect_screen` **at most once per newly visited screen** to grab real runtime `id` / `text` selectors (use `extract-selectors.py` only when a view lacks runtime IDs or you need `strings.xml` copy).
+   - Batch an entire AC's interactions + assertions into a single `mcp__maestro__run` call and fix any selector mismatch on the spot.
    - If a random app overlay (user guide, promo, rating) blocks the screen, dismiss it and add a specific rule (`when_visible` + `actions`) to `.maestro/_shared/popups.json` (template: `skills/test-author/templates/popups.json`).
 2. **Freeze Standalone Flows:**
-   - Write each passing AC to `.maestro/<RUN>/<NN-domain>/ac-NN-<slug>.yaml` with a standalone precondition (`launchApp: { clearState: false }` + `_nav/` or inline nav steps) so `suite-runner.py` can run each flow independently.
+   - Write all passing ACs to `.maestro/<RUN>/<NN-domain>/ac-NN-<slug>.yaml` in batched `Write` calls, each with a standalone precondition (`launchApp: { clearState: false }` + `_nav/` or inline nav steps) so `suite-runner.py` can run each flow independently.
+   - For feature flags, experiment variants, or environment toggles: put project-specific setup/teardown helpers in `.maestro/_shared/` instead of assuming pre-configured emulator state. Beware that `launchApp.arguments` / intent extras can behave inconsistently across Android API levels (e.g., API 33 vs API 36, or requiring a second cold start after persisting a setting).
 3. **Validate Statically:**
-   - Run `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/`. Do not re-run `suite-runner.py` in the same session if ACs just passed via MCP.
+   - Run `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/` once. Do not re-run `suite-runner.py` in the same session if ACs just passed via MCP.
 
 ## One flow = one acceptance line
 
