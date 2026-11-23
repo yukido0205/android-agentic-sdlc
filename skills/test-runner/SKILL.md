@@ -10,6 +10,7 @@ allowed-tools:
   - Grep
   - Glob
   - Bash(python3 skills/test-runner/scripts/*)
+  - Bash(python3 skills/test-author/scripts/*)
   - Bash(~/Library/Android/sdk/platform-tools/adb *)
   - Bash(adb *)
   - Bash(claude mcp list *)
@@ -31,26 +32,26 @@ allowed-tools:
 # E2E Test Automation — PRD Behavior + Figma Look + Regression on Device
 
 The unified test automation system for Android development and QC:
-1. **Single-Step Authoring & Verification (`behavior`):** Author and verify flows for a single step/ticket using Maestro MCP and `device.py nodes`.
-2. **High-Speed Suite & Regression Runner (`regression` / `suite`):** Execute multi-flow suites or full regression (~270 items) via `suite-runner.py` with real-time live terminal monitoring, instant defect logging, and state reset.
-3. **Design Verification (`design`):** Measure exact screen metrics (dp, padding, colors) against Figma specs using `device.py check`.
+1. **First-Time AC Authoring (`/test-author`):** Proves ACs live via Maestro MCP (`inspect_screen` + `run`), registers any random app overlays in `.maestro/_shared/popups.json`, and freezes standalone `.yaml` flows.
+2. **High-Speed Suite & Regression Runner (`suite-runner.py`):** Executes frozen flows or full regression (~270 items) with real-time live terminal monitoring, safe overlay recovery, `LIKELY_CAUSE` triage, and state reset.
+3. **Design Verification (`design`):** Measures exact screen metrics (dp, padding, colors) against Figma specs using `device.py check`.
 
 | Mode | Answers | Tool | Re-run cost |
 |---|---|---|---|
-| `behavior` | Does it do what the PRD says? | Maestro MCP — one flow file per acceptance line | ~0 — read pass/fail |
+| `behavior` (first pass) | Does it do what the PRD says? | `/test-author` (MCP Prove-First + Freeze) | Frozen to YAML for repeatable CLI re-runs |
 | `design` | Does it look like Figma? | `device.py check` — Figma numbers vs measured dp/colours | a table, only diffs need eyes |
-| `regression` | Does the epic meet its PRD edge cases? | `suite-runner.py` — native CLI execution with live monitor | ~0 tokens |
+| `regression` / `step` | Do frozen flows still pass? | `suite-runner.py` — native CLI execution with live monitor | Flat overhead (no per-flow LLM calls) |
 
 ---
 
-## 🛑 UNIVERSAL DEFAULT ENTRYPOINT — RUNNER-FIRST POLICY
+## 🛑 ROUTING POLICY — EXISTING FLOWS VS FIRST-TIME ACs
 
-**RULE #1 (MANDATORY & NON-NEGOTIABLE):**
-Unless the user explicitly asks to *author/write a brand new test file from scratch*, **EVERY request to test, verify, run, check, or validate on device MUST DEFAULT TO CALLING `suite-runner.py` IMMEDIATELY**:
-
-```bash
-python3 skills/test-runner/scripts/suite-runner.py <target> [options]
-```
+**RULE #1 (MANDATORY):**
+- **When frozen `.yaml` flows already exist** (regression, post-fix re-run, Gate 3 before MR): **DEFAULT TO CALLING `suite-runner.py` IMMEDIATELY**:
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py <target> [options]
+  ```
+- **When NO `.yaml` flows exist yet** (first time testing ACs, or `suite-runner.py` reports `No valid YAML flows found`): **DO NOT** write blind YAML flows from source code or run manual `adb shell input tap` loops. Invoke **`/test-author`** (Prove-First via Maestro MCP → Freeze to YAML).
 
 *(Note: `suite-runner.py` automatically initializes background token usage tracking and exports a report upon completion).*
 
@@ -70,33 +71,33 @@ python3 skills/test-runner/scripts/suite-runner.py <target> [options]
 When running multiple agents in parallel on 1 Mac with 2+ Emulators:
 1. **Never run raw `./gradlew install...` without `ANDROID_SERIAL`**: Gradle broadcasts APKs across all active emulators, colliding with concurrent agent runs. The mechanical guard `pre-tool-guard.py` will block this immediately (<20ms).
 2. **Decouple Build and Install**:
-   - **Step 1 (Build)**: Run `./gradlew assembleDebug` (pure artifact compile, zero emulator interaction).
+   - **Step 1 (Build)**: Run `./gradlew assembleDebug` (or `python3 scripts/gradle-build.py assembleDebug` inside `.worktrees/` to serialize builds via OS `flock`). Pure artifact compile, zero emulator interaction.
    - **Step 2 (Install & Verify)**: Run `suite-runner.py` with `--install`:
      ```bash
      python3 skills/test-runner/scripts/suite-runner.py <target> -m step --install
      ```
    `suite-runner.py` acquires an exclusive mutex lock on an available emulator first, sets `ANDROID_SERIAL=<locked_device_id>`, installs the APK exclusively to that emulator, and runs tests in complete isolation.
 
-### ⛔ Strict Prohibitions (Zero Token Bleed & Live Terminal Enforcement):
-- **DO NOT** pass `--headless` or `--no-terminal` unless the user **explicitly typed** `--headless`, `--no-terminal`, or `headless` in their prompt. By default, `suite-runner.py` MUST open the external macOS Terminal window (`--open-terminal`) for live visual monitoring.
-- **DO NOT** inspect screens (`inspect_screen` or `device.py nodes`).
-- **DO NOT** execute manual `adb shell input tap` or uiautomator dumps.
+### ⛔ Strict Prohibitions (Low Token Overhead & Live Terminal Enforcement):
+- **DO NOT** pass `--headless` or `--no-terminal` unless the user **explicitly typed** `--headless`, `--no-terminal`, or `headless` in their prompt. By default, `suite-runner.py` opens the external macOS Terminal window (`--open-terminal`) for live visual monitoring and **block-waits** until completion (returning the child exit code and printing the final summary + failure digest paths directly).
+- **DO NOT** poll `progress.log` in a loop (set a generous command timeout such as 600s, or run in background with reactive wakeup for large suites).
+- **DO NOT** inspect screens (`inspect_screen` or `device.py nodes`) before running existing flows.
+- **DO NOT** execute manual `adb shell input tap` or `adb shell uiautomator dump` (and never call `uiautomator dump` while Maestro MCP is active — Maestro holds UiAutomation so it always fails).
 - **DO NOT** copy folders or rewrite `.yaml` flow files line by line.
 - **DO NOT** run individual flows through sequential MCP calls.
-Let `suite-runner.py` run natively. It handles execution, terminal streaming, defect logging, and state reset with **0 token waste**.
+Let `suite-runner.py` run natively. It handles execution, terminal streaming, failure digest generation, defect logging, and state reset outside the LLM loop (keeping orchestration cost flat regardless of flow count).
 
-### Only When `suite-runner.py` Completes:
-- **If all tests PASS (✅):** Report the summary table and finish immediately.
-- **If a test FAILS (❌):**
-  - Runner has ALREADY created `issues/NN-<slug>.md`, captured the screenshot, and dumped UI hierarchy XML.
-  - ONLY THEN does the AI Agent read the issue file and failure evidence to explain the cause or propose a fix.
+### Only When `suite-runner.py` Completes (1-Read Debug Budget):
+- **If all tests PASS (✅):** Report the summary table printed by `suite-runner.py` and finish immediately. Do **not** run follow-up `adb` checks, preference reads, or codebase greps to re-verify setup/teardown steps that already executed in passing flows.
+- **If a test FAILS (❌):** Read the single-file **`debug/digest_<ac>_<ts>.md`** first (printed in stdout and linked inside `issues/NN-<slug>.md`) — it already contains `LIKELY_CAUSE`, focus window, Maestro error, failing flow YAML, prioritized visible UI nodes, and filtered logcat. Do **not** separately read raw `hierarchy.xml` + `logcat.txt` + `.yaml` unless the digest is missing an element.
+  - **`BLOCKED_BY_OVERLAY`:** Runner detected a random app/system overlay (user guide, promo, rating, etc.) and skipped creating a false bug report. Use **at most 1–2 MCP calls** (`inspect_screen` once → dismiss), add a specific rule (`when_visible` + `actions`) to `.maestro/_shared/popups.json`, and resume with `suite-runner.py <target> --resume --no-reset`.
+  - **`SELECTOR_NOT_FOUND`:** Check the digest's visible UI nodes first; if live confirmation is needed, use **at most 1–2 MCP calls** (`inspect_screen`), update the YAML selector, and resume with `--resume --no-reset` (or `--resume`).
+  - **`ASSERTION_FAILED` / `APP_CRASH_OR_ANR`:** Genuine app defect candidate. Cite the digest and generated `issues/NN-<slug>.md` to report or fix.
 
 ### When No Flows Exist or When Authoring New Tests:
 - If `suite-runner.py` reports `No valid YAML flows found`, **STOP IMMEDIATELY**.
-- **DO NOT** attempt manual exploratory testing (`inspect_screen`, `adb shell input tap`).
-- **DO NOT** write improvised YAML flows inside a verification session.
-- Instruct the user to use the dedicated authoring skill:
-  > *"No Maestro test flows found for this target. Please invoke `/test-author <target>` to generate the test flows before running verification."*
+- **DO NOT** attempt manual `adb shell input tap` loops or blind YAML authoring.
+- Use `/test-author <target>` (Prove-First via Maestro MCP → Freeze to `.yaml`) to create and prove the flows first.
 
 ---
 
@@ -108,15 +109,15 @@ from an empty session, and make fewer calls. Output size matters far less.
 
 1. **Prefer a fresh session.** In an old one every call re-reads its history; `token-usage.py start` (§0) warns, and the run goes on.
 2. **Never read a plan, PRD or Figma page whole.** Lines: `scripts/extract-acceptance.sh`. PRD: grep the `§` a line cites. Figma: cache first, then one frame node (see `references/design-spec.md`).
-3. **Read a screen with `device.py nodes [substr]`, not `inspect_screen`.** It prints one line per usable node — `id | text | x,y wxh dp | flags` — about 8× smaller than `inspect_screen` on the same screen (measured: 1.1k vs ~8.4k characters). Pass a substring to print only matching rows. Once per screen state; again only after an action changed the screen and only for an id you do not have yet. `inspect_screen` only when you need the parent/child tree.
+3. **Do not author flows blindly from source code.** For new ACs without frozen flows, use `/test-author` (Prove-First via Maestro MCP `inspect_screen` once per new screen + batched `run` → freeze YAML). Only fall back to `extract-selectors.py` / `Grep` when MCP is unavailable or a view lacks runtime IDs.
 4. **No full-screen images, ever.** Not `take_screenshot`, not `adb screencap` + `Read`. The only image allowed is `device.py crop <id>` of a node on a ✗ row.
 5. **One shell call per screen-state change.** Chain every `adb` command a state needs (`am start`, `input`, `logcat | grep`) into a single Bash call.
-6. **Explore with inline YAML, persist once.** Try steps with `run` + `yaml`, several commands per call rather than one call per tap; write the `.yaml` file only when the sequence works (`run` validates syntax, no separate check). Gradle: `| tail -3`.
+6. **1-read debug & single-pass execution.** Run frozen flows in one pass via `suite-runner.py` (which block-waits and prints the summary directly). On failure, read `debug/digest_<ac>_<ts>.md` in 1 call before touching raw XML/logcat or calling MCP. Gradle: `| tail -3`.
 7. **`cheat_sheet` is long — at most once per session**, and only when `references/maestro-flow.md` does not cover the command you need. Never call it "to be safe".
 8. **Never use the cloud tools** (`run_on_cloud`, `list_cloud_devices`, …): they upload the app to an external service.
 9. **Load a reference only for the mode you are in** (`maestro-flow.md` / `design-spec.md`), and `issue-report-template.md` only once an app defect is confirmed.
 10. **Reuse before writing.** `_nav/<screen>.yaml` and `design/<screen>.tsv` that already exist are run, not rewritten. Rewrite only what a failure points at.
-11. **Batch runs (> 2 flows): always use `suite-runner.py`.** Never call MCP `run` sequentially in a loop for multiple flows; use `suite-runner.py` for speed, zero token cost, and real-time live monitoring.
+11. **Batch runs (> 2 flows): always use `suite-runner.py`.** Never call MCP `run` sequentially in a loop for multiple flows; use `suite-runner.py` for speed, flat orchestration token cost (no per-flow LLM calls), and real-time live monitoring.
 
 ---
 
@@ -127,8 +128,8 @@ from an empty session, and make fewer calls. Output size matters far less.
   If it prints `WARNING: old session`, keep going, and put that line first in the output's Tokens section.
 
 Then, in this order:
-1. `~/Library/Android/sdk/platform-tools/adb devices` shows exactly one device.
-2. App built from this branch: `./gradlew <installDebugTask> | tail -3` (auto-detect variant from `app/build.gradle*`, default `:app:installDevDebug` or `:app:installDebug`).
+1. `~/Library/Android/sdk/platform-tools/adb devices` shows at least one active device (if ≥2 devices are connected, pass `--device <id>` or let `suite-runner.py` auto-lease an idle device).
+2. App built from this branch: compile with `./gradlew assembleDebug | tail -3` (or `python3 scripts/gradle-build.py assembleDebug` inside `.worktrees/`), then deploy via `suite-runner.py --install` (do **not** run raw `./gradlew install...` without `ANDROID_SERIAL` when ≥2 devices are connected).
 3. Maestro tools: Verify `list_devices` returns the emulator; keep its `device_id`.
 4. **Emulator auth state (Context-aware):**
    - **Default:** Expects a signed-in test account.
@@ -146,7 +147,7 @@ the data the signed-in test account already has. No source is touched.
 **When a line needs data the account does not have** (a state the backend cannot produce yet, or
 one the account lacks), do not patch anything on your own. Collect every such line first, then ask
 **once per run** with `ask_question`, naming the lines and the state each needs:
-- **Mock it** — apply `.maestro/<RUN>/fixture-override.patch`, `./gradlew :app:installDevDebug | tail -3`, run those lines, then `git apply -R` and reinstall.
+- **Mock it** — apply `.maestro/<RUN>/fixture-override.patch`, build with `./gradlew assembleDebug | tail -3` and run those lines via `suite-runner.py --install`, then `git apply -R`, rebuild, and reinstall cleanly.
 - **I'll prepare the data** — mark those lines ⚠️ Not verified ("needs data: …") and run the rest.
 - **Skip** — mark them ⚠️ Not verified ("skipped by user").
 
@@ -161,18 +162,13 @@ For each `AC-n`, classify once: **behavior**, **design**, or **not on device** (
 
 ---
 
-## 2 · Behavior mode (Single Step Authoring & Verification)
+## 2 · Authoring New Flows (Hand Off to `/test-author`)
 
-Use this when writing new test flows for a step:
-1. Read `references/maestro-flow.md` for the **semantic naming conventions**.
-2. **Never use cryptic folder names** (`s3`, `f3`, `s2s4`). Structure folders descriptively:
-   - Feature folder: `.maestro/<RUN>/<index>-<feature-domain>/` (e.g. `.maestro/<TICKET>/03-checkout-payment/`)
-   - Flow file: `ac-<index>-<verbatim-behavior-slug>.yaml` (e.g. `ac-01-submit-disabled-when-empty.yaml`)
-3. Reach the screen (reuse `_nav/<screen>.yaml` via `run` + `files`), then `device.py nodes` to get element ids.
-4. Try the line's steps with `run` + inline `yaml`. When they pass, write the `.yaml` flow file.
-   Header must include: `# AC-n: <short title> — PRD §n`. Optional tags: `@smoke`, `@regression`.
-   Log the progress to chat immediately: `<title> - verified - <n>/<total>`.
-5. Run the flows. When testing > 2 flows, switch to `suite-runner.py` (§2b) to avoid context bloat.
+When ACs have no frozen `.yaml` files yet, do **not** author flows blindly from source code inside `test-runner`. Invoke `/test-author`:
+1. Prove each AC live via Maestro MCP (`inspect_screen` once per new screen + batched `mcp__maestro__run`).
+2. Record any random app overlay encountered into `.maestro/_shared/popups.json`.
+3. Freeze standalone `ac-NN-<slug>.yaml` files (with `launchApp` / `_nav/` preconditions) and validate with `validate-flow.py`.
+4. Do not re-run `suite-runner.py` in the same session if ACs just passed via MCP; use `suite-runner.py` in a fresh session for regression or Gate 3.
 
 ---
 
@@ -187,30 +183,27 @@ python3 skills/test-runner/scripts/suite-runner.py <flow_directory_or_ticket> [o
 
 ### Streamlined Mode Presets (`-m / --mode`):
 Instead of remembering disparate flags, choose the preset matching your goal:
-- `-m repro`: Runs repro flows (`--filter repro`, `--fail-fast 1`, live terminal).
-- `-m step`: Verifies new feature step flows (`--fail-fast 1`, live terminal).
-- `-m regression`: Runs entire suite (`--resume`, live terminal).
-- `-m smoke`: Runs fast smoke suite (`--filter @smoke`, `--fail-fast 1`, live terminal).
+- `-m repro`: Runs repro flows (`--filter repro`, `--fail-fast 1`, live terminal with block-wait).
+- `-m step`: Verifies all flows in a feature step (`RUN ALL` by default so every failure surfaces in one pass; add `--fail-fast 1` explicitly if desired; live terminal with block-wait).
+- `-m regression`: Runs entire suite (`--resume`, live terminal with block-wait).
+- `-m smoke`: Runs fast smoke suite (`--filter @smoke`, `--fail-fast 1`, live terminal with block-wait).
 
-### Granular Override Options (Highest Precedence Over Presets):
-- `--open-terminal`: Opens live macOS Terminal window for real-time monitoring (default across all modes).
-- `--headless`, `--no-terminal`: **Use only when explicitly requested in prompt** (blocked by `pre-tool-guard.py` and `suite-runner.py` if agent adds it unrequested).
-- `--filter <tag_or_keyword>`: Filters flows by keyword or tag (overrides preset filter).
-- `--fail-fast [N]`: Stops execution after N failures (default 1).
+### Core Options (Most runs only need `-m` and `--install`):
+- `--install [APK_PATH]`: Locks an available emulator and installs the debug APK exclusively to it.
 - `--resume`: Resumes from `checkpoint.json` (skips passed flows).
-- `--require-env <vars>`: Comma-separated list of required env variables/tokens (e.g. `API_AUTH_TOKEN`).
-- `--mock-gps <lat,lon>`: Configures mock GPS location (e.g. `37.4220,-122.0841`).
-- `--device <id>`: ADB device ID when targeting a specific device.
-- `--no-reset`: Skips force-stop and relaunch between flows.
-- `--skip-preflight`: Skips preflight environment checks.
+- `--filter <tag_or_keyword>`: Filters flows by keyword or tag.
+- `--fail-fast [N]`: Stops execution after N failures (default 1).
+- `--device <id>`: Targets a specific ADB device ID.
+- `--no-reset`: Skips `force-stop` between flows (useful when resuming after dismissing a session overlay).
+- `--headless`: **Use only when explicitly requested in prompt** (blocked by `pre-tool-guard.py` and `suite-runner.py` if agent adds it unrequested).
 
 ### What `suite-runner.py` handles automatically:
 1. **Configuration Transparency:** Prints `⚙️ SUITE CONFIGURATION` banner displaying active Mode, Terminal, Fail-Fast, and Filter.
 2. **Auto Token Tracking:** Automatically runs background token usage tracking and writes report upon suite completion.
-3. **Preflight Health Checks:** Verifies device connection, app package installation, required tokens, and GPS before running. Fails immediately with actionable instructions if anything is missing (0 token waste).
+3. **Preflight Health Checks:** Verifies device connection, app package installation, required tokens, and GPS before running. Fails immediately with actionable instructions if anything is missing (avoiding wasted test runs and debug turns).
 4. **Step Titles & Progress Streaming:** Automatically extracts semantic step names from folder paths (`03: Checkout Payment`, `Regression Suite`) and streams live progress.
 5. **Robust Pass/Fail Parsing:** Immune to runner logging crashes during exit. If assertions passed, it will not register a false FAIL.
-6. **Zero-Evidence-Loss Defect Logging:** On failure, captures screenshot via ADB binary stream + device fallback, dumps UI hierarchy XML for selector debugging, slices logcat, and generates `issues/NN-<slug>.md` immediately.
+6. **Zero-Evidence-Loss Defect Logging & 1-Read Digest:** On failure, captures screenshot via ADB binary stream + device fallback, dumps UI hierarchy XML, slices logcat, generates a compact 1-read `debug/digest_<ac>_<ts>.md` (prioritized visible nodes + filtered logcat + flow YAML + `LIKELY_CAUSE`, PII-redacted), and writes `issues/NN-<slug>.md` (skipped on `BLOCKED_BY_OVERLAY`).
 7. **App State Isolation:** Automatically executes `adb shell am force-stop` and relaunches the app between flows to prevent popup leakage and cascading failures.
 8. **Summary & Checkpoint:** Records results in `checkpoint.json` and outputs a clean Markdown summary table.
 
@@ -264,5 +257,6 @@ Rendered markdown (never in a code block):
 - **Two devices connected**: pass `--device` to `suite-runner.py`, `device_id` to Maestro and `ANDROID_SERIAL` to Gradle, or steps can land on different devices.
 - **Installed app newer than the branch**: `installDevDebug` fails with `INSTALL_FAILED_VERSION_DOWNGRADE` and `adb install` of the APK path is hook-blocked; add `--init-script` with a scratchpad script setting `android.installation.installOptions = ['-d','-r']` on the app project (keeps sign-in, no repo edit). A branch and its base can share a version code, so record the git SHA and install time.
 - **Emulator network drops**: a launch showing "No internet connection" is the emulator, not the app; check `adb shell ping` before a run and recover with `svc wifi disable && svc wifi enable`.
-- **`--open-terminal` returns at once**: the run continues in the Terminal window; wait on its progress log (`e2e-runs/<YYMMDD-HHMM>-progress.log`) for the `🏁 COMPLETED` line, which the runner writes after the summary and token report.
+- **`--open-terminal` block-waits until completion**: the runner opens/reuses the external Terminal window and blocks until the suite finishes (or the Terminal closes), then prints the final summary, failed `digest_*.md` paths, and token line directly. Do **not** poll `progress.log`; use a generous command timeout (e.g., 600s) or background execution with completion wakeup for large regression suites.
+- **Never run `adb shell uiautomator dump` while Maestro MCP is active**: Maestro holds Android's `UiAutomation` service so `uiautomator dump` always fails; use `mcp__maestro__inspect_screen` instead.
 - **Labels don't reach the MCP result**: make a precondition and the check fail with different messages (text selector vs id) so a failure can be attributed.

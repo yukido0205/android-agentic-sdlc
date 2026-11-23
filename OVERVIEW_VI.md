@@ -4,10 +4,10 @@
 
 Khi các trợ lý AI phát triển phần mềm tiến hóa từ việc gợi ý code đơn thuần sang các Agent tự chủ thực hiện chuỗi tác vụ phức tạp, các đội ngũ phát triển ứng dụng di động gặp phải những rào cản vận hành rất đặc thù. Nếu không có các quy chuẩn miền nghiêm ngặt, các mô hình ngôn ngữ lớn (LLM) thường gặp khó khăn với vòng đời (lifecycle) phức tạp của Android, tự ý sinh ra các lớp trừu tượng thừa thãi, sửa lan man sang các file lân cận và đẩy code lên mà không qua kiểm chứng thực tế.
 
-Để đạt **tính thực dụng tối đa** và loại bỏ chi phí đọc file thừa (tool-call overhead), repository này kết hợp chặt chẽ 3 tầng bảo vệ: **Quy tắc nền luôn bật (Always-On Rule)**, **Chốt chặn cơ học 0-Token (PreToolUse Hook)**, và **Các kỹ năng tác vụ chuyên biệt (Agent Skills)**:
+Để đạt **tính thực dụng tối đa** và loại bỏ chi phí đọc file thừa (tool-call overhead), repository này kết hợp chặt chẽ 3 tầng bảo vệ: **Quy tắc nền luôn bật (Always-On Rule)**, **Chốt chặn cơ học (PreToolUse Hook)**, và **Các kỹ năng tác vụ chuyên biệt (Agent Skills)**:
 
 - **1 Quy Tắc Nền Luôn Bật (`rules/code-hygiene.md`)**: Tự động áp dụng thiết kế SOLID tinh gọn (trước khi code), chuẩn comment "Why-only" (trong khi code), và dọn rác YAGNI (sau khi code) trên mọi dòng code mà không cần gọi lệnh.
-- **1 Chốt Chặn Hook Cơ Học (`hooks/hooks.json` & `hooks/scripts/pre-tool-guard.py`)**: Chạy dưới 20ms với chi phí 0 token trước khi AI ghi file hoặc chạy lệnh bash, chặn cứng 100% hành vi `import android.*` trong `/domain/`, viết Maestro YAML sai chuẩn (`point:` hoặc thiếu assert), và gọi `maestro test` thô gây tràn token.
+- **1 Chốt Chặn Hook Cơ Học (`hooks/hooks.json` & `hooks/scripts/pre-tool-guard.py`)**: Chạy native dưới 20ms ngoài vòng lặp LLM trước khi AI ghi file hoặc chạy lệnh bash, chặn cứng 100% hành vi `import android.*` trong `/domain/`, viết Maestro YAML sai chuẩn (`point:` hoặc thiếu assert), và gọi `maestro test` thô gây tràn token.
 - **9 Agent Skills Chuyên Biệt (`skills/`)** chuẩn hóa theo các pha của vòng đời phát triển phần mềm (SDLC):
   - **`plan-*`**: Chuẩn hóa yêu cầu & Lập kế hoạch kiến trúc (`plan-feature`, `plan-slicing`).
   - **`code-*`**: Bóc tách tầng nghiệp vụ thuần Kotlin (`code-domain`).
@@ -62,15 +62,15 @@ Khi các trợ lý AI phát triển phần mềm tiến hóa từ việc gợi �
   - *Chế độ 1 (Thay đổi spec/thiết kế):* Phân tích delta giữa các phiên bản yêu cầu và rà soát lại các phần đã làm (Re-sweep).
   - *Chế độ 2 (Phạm vi ảnh hưởng của bug):* Thiết lập danh sách cho phép (**Allowlist**) nghiêm ngặt cho các file được sửa (đối chiếu bằng `git diff --name-only`) và trích xuất ma trận test hồi quy 3 cấp độ (Tier 1 $\to$ Tier 3).
 
-### 3.6. `test-author` — Tự Động Soạn Thảo Kịch Bản Test Maestro Chuẩn Xác
-- **Nỗi đau thực tế:** Tự viết test E2E cho mobile bằng tay rất mất thời gian, còn để AI tự viết tự do thì kịch bản rất dễ gãy do dùng tọa độ chạm cứng (`point:`), thiếu assertion hoặc lạm dụng `sleep`.
-- **Tại sao skill ra đời:** Tự động tạo các luồng test Maestro YAML chuẩn xác, ổn định và được kiểm chứng bằng công cụ phân tích tĩnh.
-- **Giải pháp & Giá trị:** Ép chuẩn cấu trúc thư mục nghiệp vụ (`01-order-list/`), đặt tên file chuẩn (`ac-01-display-all-orders.yaml`), trích xuất AC tự động qua `extract-acceptance.sh` và chặn lỗi tĩnh bằng `validate-flow.py`.
+### 3.6. `test-author` — Soạn Thảo Kịch Bản Test Maestro Theo Quy Trình Prove-First → Freeze
+- **Nỗi đau thực tế:** Tự viết test E2E cho mobile bằng tay rất mất thời gian, còn để AI đoán mù từ mã nguồn hoặc viết tự do thì kịch bản dễ gãy do dùng tọa độ chạm cứng (`point:`), sai selector hoặc lạm dụng `sleep`.
+- **Tại sao skill ra đời:** Chứng minh tiêu chí nghiệm thu hoặc bước tái hiện lỗi trực tiếp trên thiết bị qua Maestro MCP trước, sau đó đóng băng thành kịch bản YAML độc lập, ổn định và được kiểm tra tĩnh.
+- **Giải pháp & Giá trị:** Ép chuẩn cấu trúc thư mục nghiệp vụ (`01-order-list/`), đặt tên file chuẩn (`ac-01-display-all-orders.yaml`), precondition độc lập, đăng ký popup dự án qua `.maestro/_shared/popups.json`, và kiểm tra tĩnh bằng `validate-flow.py`.
 
-### 3.7. `test-runner` — Thực Thi Test Thiết Bị Lớn Với Giám Sát Real-Time & 0 Token Bleed
-- **Nỗi đau thực tế:** Một bộ test regression thực tế có thể lên tới gần 300 kịch bản. Chạy từng kịch bản qua lệnh gọi MCP của LLM sẽ đốt hàng trăm nghìn token và làm treo phiên làm việc.
-- **Tại sao skill ra đời:** Cung cấp bộ chạy test native thống nhất (`suite-runner.py`) với chi phí token bằng 0 khi test vượt qua và hiển thị tiến độ trực quan.
-- **Giải pháp & Giá trị:** Cung cấp 4 preset (`-m repro`, `step`, `regression`, `smoke`), stream dữ liệu ANSI trực tiếp ra cửa sổ Terminal riêng, tự động chụp ảnh màn hình/UI tree và tạo báo cáo lỗi khi fail, đo kích thước dp/màu sắc so với Figma qua `device.py`, và đo lường chính xác lượng token tiêu thụ qua `token-usage.py`.
+### 3.7. `test-runner` — Thực Thi Test Thiết Bị Quy Mô Lớn Với Giám Sát Real-Time & Chi Phí Token Phẳng
+- **Nỗi đau thực tế:** Một bộ test hồi quy thực tế có thể gồm hàng chục đến hàng trăm kịch bản. Chạy lặp lại từng kịch bản qua lệnh gọi MCP của LLM khiến chi phí token tăng tuyến tính theo từng AC/bước, còn chạy ngầm không có terminal trực quan khiến dev không thể theo dõi tiến độ.
+- **Tại sao skill ra đời:** Cung cấp bộ chạy test native thống nhất (`suite-runner.py`) giúp giữ chi phí điều phối LLM ở mức phẳng bất kể quy mô suite (không gọi LLM theo từng flow), kèm preset rõ ràng và tiến độ trực quan.
+- **Giải pháp & Giá trị:** Cung cấp 4 preset (`-m repro`, `step`, `regression`, `smoke`), block-wait và stream dữ liệu ANSI trực tiếp ra cửa sổ Terminal riêng, phân loại overlay an toàn, tự động xuất 1-read failure digest (`debug/digest_*.md`) kèm ảnh chụp/UI tree khi fail, đo kích thước dp/màu sắc so với Figma qua `device.py`, và thống kê token qua `token-usage.py`.
 
 ### 3.8. `flow-bug` — Nhạc Trưởng Điều Phối Toàn Diện Vòng Đời Bug
 - **Nỗi đau thực tế:** Quy trình sửa bug truyền thống bị phân mảnh giữa đọc log, chạy máy ảo, sửa code trong IDE và viết PR, làm rơi rụng ngữ cảnh.
@@ -88,4 +88,4 @@ Khi các trợ lý AI phát triển phần mềm tiến hóa từ việc gợi �
 
 Sức mạnh thực sự xuất hiện khi **1 Core Rule** và **9 Core Skills** vận hành cùng nhau:
 - `rules/code-hygiene.md` đóng vai trò "ý thức kỷ luật tự động" giữ cho mọi dòng code sinh ra luôn tinh gọn, đúng chuẩn SOLID thực chiến và không có comment rác.
-- Khi nghiệp vụ đã được `code-domain` cô lập thành UseCase sạch, `guard-blast` tính toán chính xác phạm vi ảnh hưởng, `plan-slicing` định hình hợp đồng mock chuẩn xác, và bộ đôi `test-author` + `test-runner` chứng minh chất lượng trên thiết bị thật mà không lãng phí token.
+- Khi nghiệp vụ đã được `code-domain` cô lập thành UseCase sạch, `guard-blast` tính toán chính xác phạm vi ảnh hưởng, `plan-slicing` định hình hợp đồng mock chuẩn xác, và bộ đôi `test-author` + `test-runner` chứng minh chất lượng trên thiết bị thật lặp đi lặp lại với chi phí điều phối phẳng, không tăng tuyến tính theo quy mô bộ test.

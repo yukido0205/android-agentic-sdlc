@@ -39,6 +39,11 @@ Never use cryptic single-letter abbreviations like `s3`, `f3`, `s2s4`, `f5`. Fol
 
 `<RUN>` = `<TICKET>` when there is a ticket, else `yyMMdd-<kebab-slug>` (SKILL.md, "Run folder").
 
+## Authoring & Recovery Reference
+
+- **First-Time AC Authoring:** Use `/test-author` (Prove-First via Maestro MCP `inspect_screen` + `run`, then freeze standalone `.yaml` flows and validate with `validate-flow.py`).
+- **Random Overlay Registry (`.maestro/_shared/popups.json`):** When `suite-runner.py` hits a known overlay from `popups.json`, it dismisses it and warm-retries once without `force-stop`. Unknown app dialogs stop safely with `LIKELY_CAUSE: BLOCKED_BY_OVERLAY`. Use `@keep-dialogs` in a flow's comments/tags if the flow intentionally tests a dialog.
+
 ## One flow = one acceptance line
 
 ```yaml
@@ -50,7 +55,7 @@ name: "AC-n <the line as a sentence>"
     clearState: false          # keep the session the emulator is already signed in with
 - runFlow: ../_nav/<screen>.yaml
 - tapOn:
-    id: "<resource-id>"        # id first; text only when the node has no id
+    id: "<resource-id>"        # id first (bare XML id or Compose testTag); text only when the node has no id
 - assertVisible:
     id: "<resource-id>"
 - assertNotVisible:
@@ -59,9 +64,7 @@ name: "AC-n <the line as a sentence>"
 ```
 
 Rules:
-- **Select by id.** XML views: the bare `android:id` name. Compose: the test tag, verbatim — see
-  `.claude/references/compose-test-tags.md`. On a Compose row the id sits on the tappable node and
-  the label on its child: tap by id, assert the label by text.
+- **Select by id.** XML views: the bare `android:id` name (e.g. `btn_submit` — avoids hardcoded flavor package prefixes). Compose: the `Modifier.testTag` string, verbatim (requires `testTagsAsResourceId = true`). On a Compose row the id sits on the tappable node and the label on its child: tap by id, assert the label by text.
 - **Every flow cites `PRD §n`** in its header. When the PRD moves, grep `.maestro/` for that `§`.
 - **Assert what the line claims, nothing else.** Extra assertions are extra failures to triage.
 - **Never type credentials.** Flows assume an already signed-in emulator. Signed out → stop with
@@ -69,13 +72,10 @@ Rules:
 - **No `takeScreenshot` in flows**, and no `take_screenshot` calls while passing — an image only for a failure.
 - A screen reachable only through a long tap path: write the path once in `_nav/`, never inline.
 
-## Run (Maestro MCP)
+## Execution & Debugging
 
-Every call takes the `device_id` from `list_devices`. `run` takes exactly one of `yaml`, `files`, `dir`.
-
-- Explore: `run` with `yaml` (inline) — nothing written to disk until it works.
-- One flow while fixing: `run` with `files: [".maestro/<RUN>/ac-<n>.yaml"]`.
-- The whole step: `run` with `dir: ".maestro/<RUN>"`. `_nav/` lives outside it, so it is never
-  run as a test on its own.
-- Syntax is validated by `run` itself; there is no separate check.
-- Out of an MCP session (CI, a human): `maestro test .maestro/<RUN>/` runs the same files.
+- **Standard Execution (Always Preferred):** Run frozen YAML files in one continuous pass via `suite-runner.py` (`-m step` runs all flows in the step by default and block-waits for the external Terminal summary):
+  ```bash
+  python3 skills/test-runner/scripts/suite-runner.py .maestro/<RUN>/ -m step
+  ```
+- **1-Read Failure Triage:** When a flow fails in `suite-runner.py`, read its generated `debug/digest_<ac>_<ts>.md` first (contains `LIKELY_CAUSE`, focus window, error, YAML, prioritized UI nodes, and filtered logcat). If `BLOCKED_BY_OVERLAY` or `SELECTOR_NOT_FOUND` needs live confirmation, use **at most 1–2 MCP calls** (`inspect_screen` — never `adb shell uiautomator dump` while Maestro is active), update `.maestro/_shared/popups.json` or the YAML selector, and resume with `suite-runner.py <target> --resume --no-reset`.

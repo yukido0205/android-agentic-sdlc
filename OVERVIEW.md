@@ -4,10 +4,10 @@
 
 As AI coding assistants have evolved from simple code completion to autonomous multi-step agents, mobile engineering teams encounter distinct operational friction. Without specialized domain rules, Large Language Models (LLMs) struggle with mobile lifecycle nuances, generate speculative abstractions, accidentally refactor adjacent files, and deliver unverified patches.
 
-To maximize pragmatism and eliminate tool-call overhead, this repository separates **Always-On Coding Guardrails (Rules)**, **Zero-Token Mechanical Checks (Hooks)**, and **Task-Specific Workflows (Skills)**:
+To maximize pragmatism and eliminate tool-call overhead, this repository separates **Always-On Coding Guardrails (Rules)**, **Mechanical Pre-Tool Checks (Hooks)**, and **Task-Specific Workflows (Skills)**:
 
 - **1 Always-On Core Rule (`rules/code-hygiene.md`)**: Enforces Lean SOLID design (pre-code), Intent-Only documentation (during-code), and YAGNI simplification (post-code) on every line of code without requiring manual invocation.
-- **1 Zero-Token PreToolUse Hook (`hooks/hooks.json` & `hooks/scripts/pre-tool-guard.py`)**: Executes in <20ms before file writes or shell commands to mechanically block `import android.*` in `/domain/`, invalid Maestro YAML flows (`point:` taps or missing assertions), and raw `maestro test` token-bleed commands.
+- **1 Mechanical PreToolUse Hook (`hooks/hooks.json` & `hooks/scripts/pre-tool-guard.py`)**: Executes natively in <20ms outside the LLM loop before file writes or shell commands to mechanically block `import android.*` in `/domain/`, invalid Maestro YAML flows (`point:` taps or missing assertions), and raw `maestro test` token-bleed commands.
 - **9 Specialized Agent Skills (`skills/`)** organized by SDLC phase:
   - **`plan-*`**: Requirements normalization & architectural slicing (`plan-feature`, `plan-slicing`).
   - **`code-*`**: Pure domain logic extraction (`code-domain`).
@@ -62,15 +62,15 @@ To maximize pragmatism and eliminate tool-call overhead, this repository separat
   - *Mode 1 (Spec/Design Delta):* Analyzes changes between requirement versions and re-sweeps finished work.
   - *Mode 2 (Bug Fix Blast Radius):* Establishes a strict **Allowlist** of editable files (forbidding edits elsewhere) and derives a high-signal regression test matrix based on actual risk tiers (Tier 1 Direct $\to$ Tier 3 System).
 
-### 3.6. `test-author` — Deterministic Maestro Test Authoring
-- **Real-World Pain Point:** Writing end-to-end mobile tests manually is slow, and raw AI-generated tests frequently fail due to hardcoded tap coordinates, missing accessibility selectors, or fragile timing delays (`sleep`).
-- **Why the Skill Was Born:** To generate robust, deterministic Maestro UI test flows from PRD acceptance criteria or bug reproduction steps.
-- **Concrete Solution & Value:** Enforces semantic domain directories (e.g., `01-order-list/`), standardized naming (`ac-01-display-all-orders.yaml`), robust selector hierarchies (preferring accessibility IDs and text over coordinates), and validates them statically via `validate-flow.py`.
+### 3.6. `test-author` — Prove-First Maestro Test Authoring
+- **Real-World Pain Point:** Writing end-to-end mobile tests manually is slow, and raw AI-generated tests frequently fail due to hardcoded tap coordinates, guessed selectors, or fragile timing delays (`sleep`).
+- **Why the Skill Was Born:** To prove acceptance criteria or bug reproductions live on a device first via Maestro MCP, then freeze passing, deterministic YAML flows to disk.
+- **Concrete Solution & Value:** Enforces semantic domain directories (e.g., `01-order-list/`), standardized naming (`ac-01-display-all-orders.yaml`), standalone preconditions, verified selector hierarchies (preferring resource IDs and text over coordinates), project overlay registration (`.maestro/_shared/popups.json`), and static validation via `validate-flow.py`.
 
 ### 3.7. `test-runner` — High-Volume Device Automation & Real-Time Feedback
-- **Real-World Pain Point:** Real mobile regression suites contain hundreds of tests (~270 items). Running them via sequential LLM tool calls burns hundreds of thousands of tokens, and background runs without live terminal output leave developers guessing if tests are hanging.
-- **Why the Skill Was Born:** To provide a unified native runner (`suite-runner.py`) with zero LLM token bleed, mode presets, and live visual feedback.
-- **Concrete Solution & Value:** Introduces 4 streamlined presets (`-m repro`, `step`, `regression`, `smoke`), streams real-time ANSI updates directly to an external terminal, auto-captures failure screenshots/UI hierarchies, measures Figma dp/colors via `device.py`, and tracks AI token usage via `token-usage.py`.
+- **Real-World Pain Point:** Real mobile regression suites contain dozens to hundreds of tests. Running them via sequential LLM/MCP tool calls scales token cost linearly with every AC and step, and background runs without live terminal output leave developers guessing if tests are hanging.
+- **Why the Skill Was Born:** To provide a unified native runner (`suite-runner.py`) that keeps LLM orchestration cost flat regardless of suite size (no per-flow LLM calls), with mode presets and live visual feedback.
+- **Concrete Solution & Value:** Introduces 4 streamlined presets (`-m repro`, `step`, `regression`, `smoke`), block-waits with real-time ANSI updates streamed directly to an external terminal, classifies random overlays safely, auto-captures 1-read failure digests (`debug/digest_*.md`) plus screenshots/UI hierarchies, measures Figma dp/colors via `device.py`, and tracks AI token usage via `token-usage.py`.
 
 ### 3.8. `flow-bug` — Closed-Loop Bug Lifecycle Orchestrator
 - **Real-World Pain Point:** The traditional bug-fixing process is fragmented: a developer diagnoses in one tool, tests on a device, writes code in an IDE, runs manual checks, and writes a PR description. Context is repeatedly lost between these manual steps.
@@ -88,4 +88,4 @@ To maximize pragmatism and eliminate tool-call overhead, this repository separat
 
 While each component was originally developed to resolve a standalone bottleneck, their real power emerged when connected:
 - `code-hygiene` acts as the always-on conscience keeping every diff lean, self-documenting, and free of speculative bloat.
-- Once business rules are isolated into pure Kotlin UseCases via `code-domain`, `guard-blast` calculates zero-bleed blast radiuses, `plan-slicing` defines clean mock contracts, and `test-author` + `test-runner` verify device behavior with zero token waste.
+- Once business rules are isolated into pure Kotlin UseCases via `code-domain`, `guard-blast` calculates tight blast radiuses, `plan-slicing` defines clean mock contracts, and `test-author` + `test-runner` verify device behavior repeatably at flat orchestration cost across regression re-runs.

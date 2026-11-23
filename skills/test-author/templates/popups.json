@@ -1,0 +1,39 @@
+{
+  "$schema": "https://android-agentic-sdlc.local/schemas/popups.v1.json",
+  "version": 1,
+  "description": "Project-specific random overlay/popup dismissal rules for suite-runner.py. Every rule MUST define a specific 'when_visible' context and an 'actions' list.",
+  "rules": [
+    {
+      "name": "example-onboarding-user-guide",
+      "enabled": false,
+      "when_visible": {
+        "id": "coachmark_container"
+      },
+      "actions": [
+        { "type": "tap", "id": "btn_guide_next" },
+        { "type": "tap", "id": "btn_guide_done" }
+      ]
+    },
+    {
+      "name": "example-modal-banner",
+      "enabled": false,
+      "when_visible": {
+        "id": "promo_dialog_root",
+        "content_desc": "Close promotion"
+      },
+      "actions": [
+        { "type": "tap", "content_desc": "Close promotion" }
+      ]
+    },
+    {
+      "name": "example-back-dismissible-sheet",
+      "enabled": false,
+      "when_visible": {
+        "id": "rating_bottom_sheet"
+      },
+      "actions": [
+        { "type": "back" }
+      ]
+    }
+  ]
+}

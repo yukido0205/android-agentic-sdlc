@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""scripts/init_worktree.py — Zero-Token Android Worktree Initializer for Parallel Agent Sessions.
+"""scripts/init_worktree.py — Native Android Worktree Initializer for Parallel Agent Sessions.
 
-Automates the creation of git worktrees under `.worktrees/<TICKET>`, symlinks critical Android
-and Agent config files (local.properties, keystore.properties, google-services.json, .agents/, .claude/),
-and enforces `org.gradle.workers.max=2` in `gradle.properties` to prevent Mac RAM exhaustion.
+Automates the creation of git worktrees under `.worktrees/<TICKET>` and symlinks critical
+Android and Agent config files (local.properties, keystore.properties, google-services.json,
+.agents/, .claude/) without dirtying `gradle.properties` or git status.
 """
 
 from __future__ import annotations
@@ -64,11 +64,16 @@ def symlink_item(src: pathlib.Path, dst: pathlib.Path, repo_root: pathlib.Path) 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Zero-Token Android Worktree Initializer for Parallel Agent Sessions")
+    parser = argparse.ArgumentParser(description="Native Android Worktree Initializer for Parallel Agent Sessions")
     parser.add_argument("ticket", help="Ticket identifier (e.g. PAY-101, PROJ-123, BUG-404)")
     parser.add_argument("-b", "--branch", help="Custom branch name (default: feature/<TICKET> or fix/<TICKET>)")
     parser.add_argument("--from-ref", dest="from_ref", default="HEAD", help="Base commit/branch reference (default: HEAD)")
-    parser.add_argument("--workers", type=int, default=2, help="Max Gradle workers limit in gradle.properties (default: 2)")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Deprecated: gradle.properties is no longer modified; use scripts/gradle-build.py --max-workers",
+    )
     parser.add_argument("--dir", dest="custom_dir", help="Custom worktree destination path")
 
     args = parser.parse_args()
@@ -128,38 +133,25 @@ def main() -> None:
     symlink_item(repo_root / ".agents", worktree_dir / ".agents", repo_root)
     symlink_item(repo_root / ".claude", worktree_dir / ".claude", repo_root)
 
-    # 4. Limit Gradle max-workers to prevent Mac RAM exhaustion
-    print(f"\n⚡ Limiting Gradle workers to {args.workers} (Mac RAM protection)...")
-    gradle_props = worktree_dir / "gradle.properties"
-    worker_line = f"org.gradle.workers.max={args.workers}"
-    if gradle_props.exists():
-        lines = gradle_props.read_text(encoding="utf-8").splitlines()
-        found = False
-        new_lines = []
-        for line in lines:
-            if line.strip().startswith("org.gradle.workers.max="):
-                new_lines.append(worker_line)
-                found = True
-            else:
-                new_lines.append(line)
-        if not found:
-            new_lines.extend(["", "# Android Agentic SDLC: RAM protection for parallel agents", worker_line])
-        gradle_props.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    else:
-        content = (
-            f"# Android Agentic SDLC: RAM protection for parallel agents\n"
-            f"{worker_line}\n"
-            f"org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m\n"
-        )
-        gradle_props.write_text(content, encoding="utf-8")
-    print(f"   🛡️ Set {worker_line} in gradle.properties")
+    # Symlink gradle-build.py only if present in repo_root, absent in worktree, and gitignored
+    gradle_wrapper = repo_root / "scripts" / "gradle-build.py"
+    wt_gradle_wrapper = worktree_dir / "scripts" / "gradle-build.py"
+    if gradle_wrapper.exists() and not wt_gradle_wrapper.exists() and not wt_gradle_wrapper.is_symlink():
+        is_ignored = subprocess.run(
+            ["git", "check-ignore", "-q", "scripts/gradle-build.py"], cwd=repo_root
+        ).returncode == 0
+        if is_ignored:
+            symlink_item(gradle_wrapper, wt_gradle_wrapper, repo_root)
+
+    if args.workers is not None:
+        print("\nℹ️  Note: --workers is deprecated; gradle.properties is kept untouched to keep git clean and share 1 Gradle Daemon.")
 
     print("\n" + "=" * 70)
     print(f"✅ ANDROID WORKTREE READY: {worktree_dir}")
     print(f"   • Ticket:         {ticket}")
     print(f"   • Branch:         {branch}")
-    print(f"   • Gradle Workers: {args.workers}")
-    print("   • Zero-Token init completed in <0.2s")
+    print("   • Build Wrapper:  scripts/gradle-build.py (OS flock + --max-workers=2)")
+    print("   • Native init completed in <0.2s")
     print("=" * 70)
     print(f"👉 To begin work in this isolated workspace:")
     print(f"   cd \"{worktree_dir}\"")

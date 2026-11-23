@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-pre-tool-guard.py — Zero-token, <20ms PreToolUse mechanical guardrails for Mobile Agent Skills.
+pre-tool-guard.py — Fast (<20ms) PreToolUse mechanical guardrails for Mobile Agent Skills.
 
-Enforces 4 hard rules before a tool executes:
+Enforces 5 hard rules before a tool executes:
 1. [domain-purity-guard] Blocks `import android.*` / `import androidx.*` inside `/domain/` Kotlin files.
 2. [maestro-static-gate] Blocks invalid Maestro YAML filenames, coordinate taps (`point:`), and missing assertions.
 3. [command-safety-guard] Blocks raw `maestro test` CLI calls (enforces `suite-runner.py`) and prompts on destructive git commands.
-4. [multi-device-guard] Blocks un-isolated `./gradlew ... install...` when 2+ emulators/devices are active without ANDROID_SERIAL.
+4. [multi-device-guard] Blocks un-isolated `./gradlew ... install...` (or `gradle-build.py ... install...`) when 2+ emulators/devices are active without ANDROID_SERIAL.
+5. [worktree-build-guard] Enforces `gradle-build.py` in worktree contexts and blocks `--stop` while a build slot is locked.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import glob
 import json
 import os
@@ -34,8 +36,17 @@ USER_HEADLESS_INTENT_RE = re.compile(r"(--headless|--no-terminal|\bheadless\b|\b
 DESTRUCTIVE_CMD_RE = re.compile(
     r"\b(git\s+reset\s+--hard|git\s+push\s+(-f|--force)|git\s+clean\s+-[a-z]*f|adb\s+uninstall)\b"
 )
-GRADLE_INSTALL_RE = re.compile(r"(?:^|[;&|\s])(?:\./)?gradlew\b.*?\binstall[A-Za-z0-9_:]*", re.IGNORECASE)
+GRADLE_INSTALL_RE = re.compile(
+    r"(?:^|[;&|\s])(?:(?:\./)?gradlew\b|python3?\s+\S*gradle-build\.py\b)[^;&|]*?\binstall[A-Za-z0-9_:]*",
+    re.IGNORECASE,
+)
 ANDROID_SERIAL_IN_CMD_RE = re.compile(r"\bANDROID_SERIAL=\S+")
+RAW_GRADLEW_SEG_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:(?:bash|sh)\s+)?(?:\S*/)?(?:\./)?gradlew\b(.*)$")
+GRADLE_STOP_SEG_RE = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:(?:bash|sh)\s+)?(?:(?:\S*/)?(?:\./)?gradlew|python3?\s+\S*gradle-build\.py)\b.*\s--stop(?:\s|$)"
+)
+GRADLE_READ_ONLY_FLAGS = {"--version", "-v", "--help", "-h", "--status"}
+GRADLE_LOCK_DIR = pathlib.Path("/tmp/android_gradle_locks")
 
 
 def reply(decision: str, reason: str = "") -> None:
@@ -214,7 +225,7 @@ def _count_active_devices() -> int:
         return 0
 
     try:
-        res = subprocess.run([adb_bin, "devices"], capture_output=True, text=True, timeout=0.15)
+        res = subprocess.run([adb_bin, "devices"], capture_output=True, text=True, timeout=1.0)
         if res.returncode != 0:
             return 0
         lines = [line.strip() for line in res.stdout.splitlines() if line.strip() and not line.startswith("List of devices")]
@@ -222,6 +233,75 @@ def _count_active_devices() -> int:
         return len(devices)
     except Exception:
         return 0
+
+
+def _active_gradle_locks() -> list[str]:
+    """Return labels of currently locked Gradle build slots (<1ms non-blocking flock probe)."""
+    if not GRADLE_LOCK_DIR.is_dir():
+        return []
+    active: list[str] = []
+    for slot_path in sorted(GRADLE_LOCK_DIR.glob("slot-*.lock")):
+        try:
+            fd = os.open(slot_path, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raw = os.read(fd, 1024).decode("utf-8", errors="replace").strip()
+                ticket = "active-build"
+                if raw:
+                    try:
+                        data = json.loads(raw)
+                        ticket = f"{data.get('ticket', '?')}(pid:{data.get('pid', '?')})"
+                    except json.JSONDecodeError:
+                        pass
+                active.append(ticket)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+    return active
+
+
+def _is_worktree_build_context(cmd: str) -> bool:
+    """True if cwd/command is inside .worktrees/ or >=2 worktrees exist in the repo."""
+    cwd = pathlib.Path.cwd().resolve()
+    if ".worktrees" in cwd.parts or ".worktrees/" in cmd or ".worktrees\\" in cmd:
+        return True
+    for parent in (cwd, *cwd.parents):
+        wt_dir = parent / ".worktrees"
+        if wt_dir.is_dir():
+            try:
+                wt_count = sum(1 for d in wt_dir.iterdir() if d.is_dir())
+                if wt_count >= 2:
+                    return True
+            except OSError:
+                pass
+        if (parent / ".git").exists():
+            break
+    return False
+
+
+def _find_gradle_build_wrapper() -> str:
+    """Return best runnable path to gradle-build.py for user-facing guidance."""
+    cwd = pathlib.Path.cwd().resolve()
+    rel_cands = (
+        "scripts/gradle-build.py",
+        ".agents/scripts/gradle-build.py",
+        ".claude/scripts/gradle-build.py",
+    )
+    for rel in rel_cands:
+        if (cwd / rel).is_file():
+            return rel
+    for cand in (
+        pathlib.Path.home() / ".gemini" / "config" / "scripts" / "gradle-build.py",
+        pathlib.Path.home() / ".claude" / "scripts" / "gradle-build.py",
+    ):
+        if cand.is_file():
+            return str(cand)
+    return "scripts/gradle-build.py"
 
 
 def check_run_command(args: dict, hook_data: dict) -> None:
@@ -276,9 +356,37 @@ def check_run_command(args: dict, hook_data: dict) -> None:
                     "Running './gradlew ... install...' without device binding deploys simultaneously to ALL emulators, "
                     "corrupting parallel agent sessions.\n"
                     "Resolution:\n"
-                    "1. (Recommended) Decouple Build & Install: Build with './gradlew assembleDebug', then pass '--install' to suite-runner.py "
+                    "1. (Recommended) Decouple Build & Install: Build with 'python3 scripts/gradle-build.py assembleDebug' "
+                    "(or './gradlew assembleDebug' in single-repo mode), then pass '--install' to suite-runner.py "
                     "(which locks an idle emulator and installs safely via mutex lock).\n"
-                    "2. Or specify target device explicitly: 'ANDROID_SERIAL=<device_id> ./gradlew ...'",
+                    "2. Or specify target device explicitly: 'ANDROID_SERIAL=<device_id> ...'",
+                )
+
+    # 3e. Worktree Gradle Build Lock & Daemon Safety Guard
+    segments = [seg.strip() for seg in re.split(r"(?:&&|\|\||[;\n|])", cmd) if seg.strip()]
+    for seg in segments:
+        if GRADLE_STOP_SEG_RE.match(seg):
+            active_locks = _active_gradle_locks()
+            if active_locks:
+                reply(
+                    "deny",
+                    f"[worktree-build-guard] Blocked '--stop' while Gradle build slot(s) are active ({', '.join(active_locks)}). "
+                    "Stopping the shared Gradle Daemon would abort builds in other worktrees.",
+                )
+
+        m_raw = RAW_GRADLEW_SEG_RE.match(seg)
+        if m_raw:
+            tail_tokens = m_raw.group(1).strip().split()
+            if tail_tokens and all(tok in GRADLE_READ_ONLY_FLAGS for tok in tail_tokens):
+                continue
+            if _is_worktree_build_context(cmd):
+                wrapper = _find_gradle_build_wrapper()
+                tail_str = f" {m_raw.group(1).strip()}" if m_raw.group(1).strip() else " assembleDebug"
+                reply(
+                    "deny",
+                    "[worktree-build-guard] Direct './gradlew' is blocked in worktree/multi-worktree contexts to prevent "
+                    "concurrent Gradle Daemon RAM exhaustion.\n"
+                    f"Run through the OS-flock build wrapper instead:\n  python3 {wrapper}{tail_str}",
                 )
 
     reply("allow")

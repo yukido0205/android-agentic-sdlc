@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# scripts/init-worktree.sh — Zero-Token Android Worktree Initializer
+# scripts/init-worktree.sh — Native Android Worktree Initializer
 #
 # Creates an isolated git worktree for parallel agent sessions (.worktrees/<TICKET>),
 # symlinks vital Android/Agent gitignored files (local.properties, keystore.properties,
-# google-services.json, .agents/, .claude/), and sets org.gradle.workers.max=2
-# to prevent Mac RAM exhaustion.
+# google-services.json, .agents/, .claude/), without mutating gradle.properties.
 #
 # Usage:
-#   ./scripts/init-worktree.sh <TICKET> [--branch <name>] [--from <ref>] [--workers <N>]
+#   ./scripts/init-worktree.sh <TICKET> [--branch <name>] [--from <ref>]
 #
 
 set -euo pipefail
@@ -27,13 +26,13 @@ fi
 TICKET=""
 BRANCH=""
 BASE_REF="HEAD"
-WORKERS=2
+WORKERS=""
 CUSTOM_DIR=""
 
 usage() {
   local code="${1:-0}"
   cat <<EOF
-Zero-Token Android Worktree Initializer for Parallel Agent Sessions
+Native Android Worktree Initializer for Parallel Agent Sessions
 
 Usage:
   ./scripts/init-worktree.sh <TICKET> [options]
@@ -44,7 +43,7 @@ Arguments:
 Options:
   -b, --branch <name>    Custom branch name (default: feature/<TICKET> or fix/<TICKET>)
   --from <ref>           Base branch or commit reference (default: HEAD)
-  --workers <N>          Limit Gradle max-workers to avoid RAM exhaustion (default: 2)
+  --workers <N>          Deprecated: gradle.properties is left untouched; use scripts/gradle-build.py --max-workers
   --dir <path>           Custom worktree destination directory
   -h, --help             Show this help message
 EOF
@@ -176,33 +175,25 @@ done < <(find "$REPO_ROOT" -name "google-services.json" -not -path "*/.worktrees
 link_item "$REPO_ROOT/.agents" "$WORKTREE_DIR/.agents"
 link_item "$REPO_ROOT/.claude" "$WORKTREE_DIR/.claude"
 
-# 4. Limit Gradle max-workers in worktree gradle.properties to prevent Mac RAM exhaustion
-echo ""
-echo "⚡ Limiting Gradle workers to $WORKERS (Mac RAM protection)..."
-GRADLE_PROPS="$WORKTREE_DIR/gradle.properties"
-if [[ -f "$GRADLE_PROPS" ]]; then
-  if grep -q "org\.gradle\.workers\.max" "$GRADLE_PROPS"; then
-    sed -i '' -e "s/^org\.gradle\.workers\.max=.*/org.gradle.workers.max=$WORKERS/" "$GRADLE_PROPS" 2>/dev/null || \
-    sed -i -e "s/^org\.gradle\.workers\.max=.*/org.gradle.workers.max=$WORKERS/" "$GRADLE_PROPS"
-  else
-    echo -e "\n# Android Agentic SDLC: RAM protection for parallel agents\norg.gradle.workers.max=$WORKERS" >> "$GRADLE_PROPS"
+# Symlink gradle-build.py only if present in repo root, absent in worktree, and gitignored
+if [[ -f "$REPO_ROOT/scripts/gradle-build.py" && ! -e "$WORKTREE_DIR/scripts/gradle-build.py" && ! -L "$WORKTREE_DIR/scripts/gradle-build.py" ]]; then
+  if git -C "$REPO_ROOT" check-ignore -q "scripts/gradle-build.py" 2>/dev/null; then
+    link_item "$REPO_ROOT/scripts/gradle-build.py" "$WORKTREE_DIR/scripts/gradle-build.py"
   fi
-else
-  cat <<EOF > "$GRADLE_PROPS"
-# Android Agentic SDLC: RAM protection for parallel agents
-org.gradle.workers.max=$WORKERS
-org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m
-EOF
 fi
-echo "   🛡️ Set org.gradle.workers.max=$WORKERS in gradle.properties"
+
+if [[ -n "$WORKERS" ]]; then
+  echo ""
+  echo "ℹ️  Note: --workers is deprecated; gradle.properties is kept untouched to keep git clean and share 1 Gradle Daemon."
+fi
 
 echo ""
 echo "======================================================================"
 echo "✅ ANDROID WORKTREE READY: $WORKTREE_DIR"
 echo "   • Ticket:         $TICKET"
 echo "   • Branch:         $BRANCH"
-echo "   • Gradle Workers: $WORKERS"
-echo "   • Zero-Token init completed in <0.2s"
+echo "   • Build Wrapper:  scripts/gradle-build.py (OS flock + --max-workers=2)"
+echo "   • Native init completed in <0.2s"
 echo "======================================================================"
 echo "👉 To begin work in this isolated workspace:"
 echo "   cd \"$WORKTREE_DIR\""
