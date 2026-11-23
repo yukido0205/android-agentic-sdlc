@@ -3,66 +3,54 @@
 > **Status:** 🟡 DRAFT | 🟢 READY TO BUILD | 🚀 IN PROGRESS | ✅ DONE
 > **Lead / Owner:** <Name>
 > **Architecture:** Android MVI (`handleIntent`) + Clean Architecture
-> **Files:** Lean 2-File Mode (`PLAN.md` + optional `CONTRACT.md`)
+> **Files:** Lean 2-File Mode (`PLAN.md` + optional `CONTRACT.md` & `FIGMA-CACHE.md`)
 
 ---
 
 ## 1 · Triad Sources & Scope
 - **PRD:** <link, pinned version + commit>
-- **Figma:** <link / file key / node IDs>
+- **Figma:** <link / file key> *(raw node trees, tokens & copy cached in `FIGMA-CACHE.md` when large)*
 - **API Docs:** <path / endpoint specs>
 - **Replaced Screen (if any):** <screen being replaced, or None>
-- **Phase 1 Goal:** <1-2 sentences on what this milestone ships>
+- **Phase 1 Goal:** <1–2 sentences on what this milestone ships>
+
+### Screen Map (Delta Routing)
+| Screen | Figma Node ID | Owning Slice | Known Traps / Stale Frames |
+|---|---|---|---|
+| <Screen Name> | `<node_id>` | `slice-01` | <e.g. Node `1:23` is outdated; use `FIGMA-CACHE.md#screen-a`> |
 
 ---
 
 ## 2 · Open Questions & Assumptions (Anomaly Triangle)
-> Self-contained table for discrepancies, gaps, and assumptions.
-> When asking PM/Design: Use visual & UX terms (No developer jargon).
-> When asking BE: Use data flow & field responsibilities.
+> **Chat-Only Slack Snippets:** Emit persona-aware Slack snippets in chat when running `/plan-feature` (or on demand); never bloat `PLAN.md` with copy-paste messages.
+> When asking PM/Design: visual & UX terms only. When asking BE: data flow & field responsibilities.
 
-| Question ID | Discrepancy / Question | Owner | Assumption in force (Defensive Strategy) | Blocks | Status |
+### Open Questions
+| Question ID | Conflict / Gap (PRD vs Figma vs API) | Technical Risk | Assumption in Force (Defensive Strategy) | Owner | Impact |
 |---|---|---|---|---|---|
-| question-01 | <short summary> | PM / BE / Design | <Safe fallback / mock fixture> | <step/slice> | Open |
+| question-01 | PRD (§2.1) vs Figma (`1:23`): <exact discrepancy> | <What breaks if wrong> | <Safe fallback / mock fixture> | PM / BE / Design | `slice-01` / `step-02` |
 
-### Detailed Questions & Copy-Paste Clarification Snippets
+<details>
+<summary>Resolved Questions (0)</summary>
 
-#### question-01 — <Discrepancy Title>
-- **Flow & Screen:** <What the user is doing on which screen>
-- **Discrepancy (PRD vs Figma vs API):**
-  - **PRD (§n):** <exact quote or spec>
-  - **Figma (`node_id`):** <design behavior>
-  - **API:** <endpoint / payload>
-- **Technical Release Risk:** <What fails or breaks if assumed wrong>
-- **Client Defensive Strategy:** <Safe fallback, mock, or neutral state>
+| Question ID | Final Ruling | Superseded Assumption | Impact |
+|---|---|---|---|
+| — | — | — | — |
 
-> 💬 **Slack / Teams Snippet (Persona-Aware):**
->
-> `@<Role>: For [<Screen / Flow Name>], we noticed a specification discrepancy:
-> - **Design / Current:** <visual / behavior per Figma or code>
-> - **PRD:** <behavior per spec>
->
-> Please confirm the preferred approach:
-> 👉 **[A]** <Option A in product/data terms>
-> 👉 **[B]** <Option B in product/data terms>
->
-> *(Client is temporarily proceeding with [A]. If no reply by [Deadline: e.g. 5:00 PM tomorrow], we will lock A to maintain schedule).*`
+</details>
 
 ---
 
 ## 3 · User Stories & Acceptance Criteria
-> Focus 100% on the **Anomaly Triangle**: edge cases, missing data fallbacks, timeouts, stored invariants (`act → leave → reopen → observe`).
-> Zero Happy Path prose: standard flows are 1 line: `[State] + [Event] -> [Target State]`.
+> Focus 100% on the **Anomaly Triangle**: missing data fallbacks, failures/timeouts, stored invariants (`act → leave → reopen → observe`).
+> Zero Happy Path prose: standard flow is 1 formula `[State] + [Event] -> [Target State]`.
 
-### Story 01: <Title>
-*As a <actor>, I want <capability>, so that <value>.*
-- **Happy Path:** `[Idle] + [User action] -> [Success state]`
-- **AC-1 (Missing Data / Safe State):** <e.g. Missing/unknown backend fields map safely to neutral UI>
-- **AC-2 (Failure & Timeout):** <e.g. Network error displays retry snackbar, keeps current input>
-- **AC-3 (Stored Invariant):** <e.g. Save action → leave screen → reopen app → observe data persisted>
+| Story ID | Capability & Happy Path | Key Anomalies (AC-1..AC-n) | Slice |
+|---|---|---|---|
+| Story 01 | **<Actor>:** <capability> — `[Idle] + [Action] -> [Success]` | **AC-1 (Safe State):** Unknown/missing fields map to neutral UI; **AC-2 (Failure):** Timeout/5xx shows retry snackbar & keeps input; **AC-3 (Invariant):** Save → leave → reopen → data persisted | `slice-01` |
 
 ### Key Technical Risks & Mitigations
-- **Risk-01:** <e.g. DB migration rollback, third-party API rate limits, backward compatibility> → Mitigation: <strategy>
+- **Risk-01:** <e.g. DB migration rollback, API rate limit, backward compatibility> → Mitigation: <strategy>
 
 ---
 
@@ -70,6 +58,7 @@
 > **One step = One MR ≤ 300 changed lines**, ~3–5 files (excl. resources).
 > **Step Order:** (1) No-UI logic → (2) Walking skeleton (unreachable) → (3) Happy path → (4) Errors & edge cases → (5) Polish.
 > **Status Lifecycle:** `NOT PLANNED` → `TODO` → `IN PROGRESS` → `REVIEWING` (MR open) → `DONE` (merged)
+> **Compaction Rule:** Keep active step `Files` / `Decisions` / `Tasks` inside `<details>`. When a step is `DONE`, drop checked-off boilerplate tasks and compact into 1–3 lines of permanent **Technical Decisions** (anti-hallucination anchor for subsequent steps & deltas).
 
 ### Slices Overview
 | Slice ID | Name / Ticket | Owner | Delivers | Consumes / Mocks | Status |
@@ -79,54 +68,27 @@
 ---
 
 ### slice-01: <Name> (`PROJ-101`)
+| Step | Scope | Key Acceptance (Observable) | Status | MR / Commit |
+|---|---|---|---|---|
+| step-01 | No-UI logic: validation, use cases, mappers (unknown → safe state) | Unexpected backend payload maps to safe fallback without crash | DONE | `!101` `a1b2c3d` |
+| step-02 | Walking skeleton: MVI ViewModel (`handleIntent`), UiState, Screen UI on mock | Screen renders mock data; intents update state; gated behind flag | IN PROGRESS | — |
+| step-03 | Happy path integration: real API / DB for success scenario only | Successful server response renders real data on device | TODO | — |
+| step-04 | Errors & edge cases: timeouts, 4xx/5xx, retry, empty states | Simulated network failure shows retry banner; retry recovers | TODO | — |
+| step-05 | Polish & telemetry: loading skeleton, analytics, UI polish | Analytics events verified on device/logcat | TODO | — |
 
-#### step-01: No-UI Logic
-- **Status:** TODO
-- **MR:** — | **Commit:** —
-- **Scope:** Validation, domain use cases, formatters, mappers (unknown → safe state).
-- **Tasks:**
-  - [ ] Add domain entity & mapper
-  - [ ] Unit test mapper with edge cases & unknown types
-- **Acceptance:**
-  - [ ] Given unexpected backend payload, mapper returns safe fallback without crash.
+<details>
+<summary>📌 Technical Decisions & Active Step Plan (slice-01)</summary>
 
-#### step-02: Walking Skeleton
-- **Status:** TODO
-- **MR:** — | **Commit:** —
-- **Scope:** MVI ViewModel (`handleIntent`), UiState, Screen UI on mock data. Merged unreachable behind feature flag/router.
-- **Tasks:**
-  - [ ] Define `UiState`, `Intent`, `Event`
-  - [ ] Implement `handleIntent` on fake repository
-  - [ ] Connect Fragment/Composable to ViewModel
-- **Acceptance:**
-  - [ ] Screen renders mock data; intents update state; hidden behind flag in production.
+- **step-01 (DONE — Decisions):** `domain/<pkg>/<Validator>.kt` (pure Kotlin); `data/mapper/<Mapper>.kt` maps unknown/null → `SafeType.UNKNOWN`; unit tests in `<Mapper>Test.kt`.
+- **step-02 (IN PROGRESS):**
+  - **Files:** `ui/<pkg>/<Feature>ViewModel.kt`, `ui/<pkg>/<Feature>Screen.kt`, `di/<Feature>FakeModule.kt`, `<Router>.kt`
+  - **Decisions:** Gate route behind `ff_<feature>_v2`; reuse existing `<SharedBanner>`; `Fake<Feature>Repository` returns 2 static items.
+  - **Tasks:**
+    - [x] Define `UiState`, `Intent`, `Event` per `CONTRACT.md`
+    - [ ] Implement `handleIntent` on `Fake<Feature>Repository`
+    - [ ] Connect Composable/Fragment to ViewModel behind feature flag
 
-#### step-03: Happy Path Integration
-- **Status:** TODO
-- **MR:** — | **Commit:** —
-- **Scope:** Real API / DB integration for success scenario only.
-- **Tasks:**
-  - [ ] Connect remote data source & repository implementation
-- **Acceptance:**
-  - [ ] Successful server response renders real data on device.
-
-#### step-04: Errors & Edge Cases
-- **Status:** TODO
-- **MR:** — | **Commit:** —
-- **Scope:** Timeouts, 4xx, 5xx, retry mechanisms, empty states.
-- **Tasks:**
-  - [ ] Handle error states in ViewModel & UI
-- **Acceptance:**
-  - [ ] Simulating network failure displays retry banner; retry recovers gracefully.
-
-#### step-05: Polish & Telemetry
-- **Status:** TODO
-- **MR:** — | **Commit:** —
-- **Scope:** Loading skeleton, analytics events, UI polish.
-- **Tasks:**
-  - [ ] Track screen view and click events
-- **Acceptance:**
-  - [ ] Analytics events verified on device/logcat.
+</details>
 
 ---
 

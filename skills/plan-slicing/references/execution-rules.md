@@ -126,18 +126,16 @@ TODO → IN PROGRESS → REVIEWING (MR open) → DONE (merged)
   banner and a pointer; the original reasoning stays as the record.
 - **New scope gets a new plan folder**, not an edit to a closed slice.
 - **Deferred work has one home:** the `PLAN.md §5 Follow-ups & Phase 2` section.
-- **When an answer arrives, reconcile dependent records** in `PLAN.md §2` and `CONTRACT.md`.
-- **Split rule (Emergency only):** Only split `PLAN.md` if it exceeds 600 lines, keeping `PLAN.md` as the index and extracting `slices/<TICKET>.md`. Otherwise keep everything in `PLAN.md`.
+- **When an answer arrives, reconcile dependent records** in `PLAN.md §2` and `CONTRACT.md`, and fold the resolved question into `<details><summary>Resolved Questions (N)</summary>`.
+- **Control length inside `PLAN.md` instead of splitting slices:** Splitting `PLAN.md` into `slices/*.md` forces agents to read every slice file on cross-slice deltas. Instead, keep all slices in `PLAN.md §4` as 1-row-per-step tables, fold active step details inside `<details>`, and **compact `DONE` steps** to 1–3 lines of permanent Technical Decisions (files, classes, flags, DI seams, invariants). Offload raw Figma node dumps to optional `FIGMA-CACHE.md` and keep Slack snippets chat-only.
 
-## Plan folder layout (Lean 2-File Architecture)
+## Plan folder layout (Lean 2-File Architecture + Optional Cache)
 
 ```
 plans/<EPIC>/
-  PLAN.md        ← Single source of truth: Sources, Questions, Stories, Slices & Steps, Phase 2
+  PLAN.md        ← Single source of truth: Scope/Screen Map, Questions, Stories, Compact Step Tables & <details> Technical Decisions, Phase 2
   CONTRACT.md    ← Shared Kotlin/Swift types, interfaces, MVI state/intent (if shared across slices)
+  FIGMA-CACHE.md ← Optional machine-read cache for raw Figma node trees, tokens & copy (large Figma only)
 ```
 
-**Anti-Overmanagement:** Eliminate `TASK-BREAKDOWN.md`, `PRD-TRACE.md`, `REGRESSION.md`, `TICKETS.md`, `use-cases.md`, and individual slice files. All steps, acceptance criteria, and progress live directly inside `PLAN.md`.
-when there is Figma; `TICKETS.md` on the first follow-up. Planning slices nobody is
-working on wastes tokens and goes stale before anyone builds them. Prefer a gitignored folder (`plans/`)
-over a new root folder that git would track.
+**Anti-Overmanagement:** Eliminate `TASK-BREAKDOWN.md`, `PRD-TRACE.md`, `REGRESSION.md`, `TICKETS.md`, `use-cases.md`, and individual `slices/*.md` files. Keep cross-slice delta checks to a single read (`PLAN.md` + `CONTRACT.md`). Prefer a gitignored folder (`plans/`) over a new root folder that git would track.
