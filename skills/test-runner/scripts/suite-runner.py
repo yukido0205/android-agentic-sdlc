@@ -898,12 +898,104 @@ def try_dismiss_overlay(
     return False, ""
 
 
+_WRAPPER_MAESTRO_CMDS = frozenset({
+    "runflowcommand",
+    "runflow",
+    "repeatcommand",
+    "repeat",
+    "retrycommand",
+    "retry",
+    "applyconfigurationcommand",
+})
+
+_SELECTOR_MAESTRO_CMDS = frozenset({
+    "tapon",
+    "taponelement",
+    "taponelementcommand",
+    "doubletapon",
+    "doubletaponelement",
+    "doubletaponelementcommand",
+    "longpresson",
+    "longpressonelement",
+    "longpressonelementcommand",
+    "scrolluntilvisible",
+    "scrolluntilvisiblecommand",
+    "extendedwaituntil",
+    "extendedwaituntilcommand",
+    "copytextfrom",
+    "copytextfromcommand",
+})
+
+ASSERTION_ERR_RE = re.compile(
+    r"\bassertion\s+(?:is\s+false|failed|error)\b|^\s*(?:>\s*)?assert\s+that\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+SELECTOR_ERR_RE = re.compile(
+    r"\belement\s+not\s+found\b|\bunable\s+to\s+find\s+element\b|\bno\s+matching\s+(?:element|view)\b|\bnot\s+found\b|\btimed\s+out\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_command_name(entry: dict) -> str:
+    for key in ("evaluatedCommand", "command"):
+        val = entry.get(key)
+        if isinstance(val, dict) and val:
+            return next(iter(val.keys()))
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    cmd_type = entry.get("type")
+    return cmd_type.strip() if isinstance(cmd_type, str) else ""
+
+
+def _collect_failed_commands(entries: object, out: list[str]) -> None:
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        meta = entry.get("metadata")
+        status = meta.get("status") if isinstance(meta, dict) else entry.get("status")
+        if str(status or "").upper() == "FAILED":
+            name = _extract_command_name(entry)
+            if name:
+                out.append(name)
+        for nested_key in ("commands", "subCommands"):
+            _collect_failed_commands(entry.get(nested_key), out)
+
+
+def _extract_failed_maestro_command(debug_dir: str) -> str:
+    """Returns the leaf FAILED command name from Maestro's newest commands JSON in debug_dir, or ''."""
+    if not debug_dir or not os.path.isdir(debug_dir):
+        return ""
+    candidates: list[Path] = []
+    root = Path(debug_dir)
+    for pattern in ("commands-*.json", "commands.json"):
+        candidates.extend(root.rglob(pattern))
+    if not candidates:
+        return ""
+    try:
+        newest = max(candidates, key=lambda p: p.stat().st_mtime)
+        data = json.loads(newest.read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return ""
+
+    entries = data if isinstance(data, list) else data.get("commands") if isinstance(data, dict) else None
+    failed: list[str] = []
+    _collect_failed_commands(entries, failed)
+    if not failed:
+        return ""
+    # Skip outer wrappers (runFlow/repeat/retry) so the inner failing leaf command drives classification.
+    leaf = [c for c in failed if c.lower() not in _WRAPPER_MAESTRO_CMDS]
+    return leaf[-1] if leaf else failed[-1]
+
+
 def classify_failure(
     error_summary: str,
     focus_window: str,
     hierarchy_path: str,
     logcat_path: str,
     app_pkg: str,
+    debug_dir: str = "",
 ) -> tuple[str, list[str], list[str]]:
     """Classifies failure into LIKELY_CAUSE + raw evidence lines + overlay clickable hints."""
     evidence: list[str] = []
@@ -939,9 +1031,21 @@ def classify_failure(
                 break
         return "BLOCKED_BY_OVERLAY", evidence, hints
 
-    # 3. Selector vs Assertion
-    err_lower = (error_summary or "").lower()
-    if "not found" in err_lower or "timed out" in err_lower or "element" in err_lower:
+    # 3. Prefer structured Maestro command metadata over CLI stdout text (immune to generic hints).
+    failed_cmd = _extract_failed_maestro_command(debug_dir)
+    if failed_cmd:
+        evidence.append(f"Failed Command: {failed_cmd}")
+        cmd_lower = failed_cmd.lower()
+        if cmd_lower.startswith("assert"):
+            return "ASSERTION_FAILED", evidence, []
+        if cmd_lower in _SELECTOR_MAESTRO_CMDS:
+            return "SELECTOR_NOT_FOUND", evidence, []
+
+    # 4. Fallback to anchored stdout patterns: check assertion first so generic hints never hide app defects.
+    err_text = error_summary or ""
+    if ASSERTION_ERR_RE.search(err_text):
+        return "ASSERTION_FAILED", evidence, []
+    if SELECTOR_ERR_RE.search(err_text):
         return "SELECTOR_NOT_FOUND", evidence, []
     return "ASSERTION_FAILED", evidence, []
 
@@ -1212,7 +1316,10 @@ def run_maestro_flow(maestro_bin, device_id, flow_path, debug_dir):
     error_summary = ""
     if not passed:
         lines = [l.strip() for l in output.splitlines() if l.strip()]
-        err_lines = [l for l in lines if "error" in l.lower() or "fail" in l.lower() or "not found" in l.lower() or "timed out" in l.lower()]
+        err_lines = [
+            l for l in lines
+            if any(k in l.lower() for k in ("error", "fail", "assertion", "not found", "timed out"))
+        ]
         error_summary = "\n".join(err_lines[-4:]) if err_lines else output[-300:]
 
     return {
@@ -2017,6 +2124,7 @@ def main():
                     artifacts.get("hierarchy", ""),
                     artifacts.get("logcat", ""),
                     args.app_pkg,
+                    debug_dir=debug_dir,
                 )
 
                 digest_path = generate_failure_digest(
