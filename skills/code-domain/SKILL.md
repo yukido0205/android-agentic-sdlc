@@ -59,7 +59,7 @@ Steps 1–2 are **planning only**. The single artifact they may write is the dom
 2. Follow [references/domain_doc_template.md](./references/domain_doc_template.md) to document:
    - **Ubiquitous Language**: Definitions of terms used by developers, QA, and product teams.
    - **Business Rules Matrix / Decision Table**: Exact inputs, constraints, and outputs.
-   - **State Transition Diagram**: Mermaid state diagram of domain entities.
+   - **Statechart & Transition Table (via `design-state` Mode 3 when non-trivial)**: Mermaid `stateDiagram-v2` (guards, composite/parallel states) + Transition & Guard Table (`IGNORE`/`DROP`) + Lifecycle Recovery; validate with `python3 skills/design-state/scripts/validate-statechart.py docs/domain/<feature_name>.md`.
    - **Domain Invariants**: Conditions that must always hold true.
 
 ### Approval Gate (end of planning phase)

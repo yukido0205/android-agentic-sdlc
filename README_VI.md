@@ -18,6 +18,7 @@ Thay vì viết system prompt ngày càng dài để rồi model dần quên, b�
 Yêu cầu AI code cả tính năng trong một phiên chat dễ dẫn đến bịa API và tạo diff khổng lồ.
 * **`/plan-feature`** đối chiếu PRD và Figma thành một file `PLAN.md` duy nhất kèm edge cases và câu hỏi Slack sẵn sàng gửi đi trước khi viết dòng code nào.
 * **`/plan-slicing`** đóng băng interface/DTO dùng chung trong `CONTRACT.md` và chia nhỏ thành các vertical step ($\le 300$ dòng/PR). Chạy `/clear` giữa `init` $\to$ `plan` $\to$ `step` giúp context luôn sạch và tránh model bị trôi ngữ cảnh.
+* **`/design-state`** mô hình hóa luồng MVI/domain phức tạp thành Mermaid `stateDiagram-v2` + Transition & Guard Table (`IGNORE` chống double-tap, `DROP` bỏ stale callback) và kiểm chuẩn tĩnh với `validate-statechart.py` (0 token) để dev review logic trước khi agent viết code.
 
 ### 2. Bảo vệ Clean Architecture & Chặn lỗi hồi quy (Regression)
 * **`/code-domain`** tách UseCase Kotlin thuần và sealed error model ra khỏi các ViewModel phình to.
@@ -53,8 +54,8 @@ flowchart LR
         H["hooks/scripts/pre-tool-guard.py<br/>• Chặn android.* trong /domain/<br/>• Chặn tap tọa độ & raw maestro CLI<br/>• Chặn force-push, multi-device & worktree build"]
     end
 
-    subgraph L3["3. Composable Workflows (11 Skills)"]
-        S["plan-*  •  code-*  •  guard-*<br/>test-*  •  flow-*  •  ship-*<br/>Chỉ nạp khi được gọi"]
+    subgraph L3["3. Composable Workflows (12 Skills)"]
+        S["plan-*  •  design-state  •  code-*<br/>guard-*  •  test-*  •  flow-*  •  ship-*<br/>Chỉ nạp khi được gọi"]
     end
 
     L1 --> L2 --> L3
@@ -148,7 +149,7 @@ chmod +x install.sh
 
 ---
 
-## Tổng quan 11 Skills
+## Tổng quan 12 Skills
 
 Cú pháp đầy đủ, tham số và cờ lệnh được tài liệu hóa chi tiết tại [`docs/COMMANDS.md`](./docs/COMMANDS.md).
 
@@ -156,6 +157,7 @@ Cú pháp đầy đủ, tham số và cờ lệnh được tài liệu hóa chi 
 | :--- | :--- | :--- |
 | **Plan** | `/plan-feature` | Gom PRD/Figma rời rạc thành một file `PLAN.md` gọn nhẹ + câu hỏi làm rõ trên Slack. |
 | **Plan** | `/plan-slicing` | Chia epic thành `CONTRACT.md` + các vertical step ($\le 300$ dòng) qua từng session sạch. |
+| **Design** | `/design-state` | Thiết kế & kiểm chuẩn Statechart (`stateDiagram-v2` + Transition Table qua `validate-statechart.py`). |
 | **Code** | `/code-domain` | Tách UseCase/Entity Kotlin thuần không dính phụ thuộc Android SDK. |
 | **Diagnose** | `/test-hunter` | Điều tra root cause ở chế độ chỉ đọc; xuất báo cáo chẩn đoán không sửa code. |
 | **Guard** | `/guard-blast` | Khóa allowlist các file được phép sửa và sinh ma trận regression khoanh vùng. |

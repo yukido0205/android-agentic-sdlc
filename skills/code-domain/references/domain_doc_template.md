@@ -32,19 +32,38 @@ Tabular breakdown of inputs, conditions, and expected outcomes.
 | Expired Coupon | e.g. Expired date | Any | No discount | `DiscountError.Expired` |
 | Min Amount Not Met| e.g. Valid coupon | Total < $50 | No discount | `DiscountError.ThresholdNotMet` |
 
-## 5. State Transition Flow
-Visual diagram of valid state changes.
+## 5. Statechart & Transition Rules
+Visual topology and deterministic transition matrix (validated via `validate-statechart.py` when entity lifecycle has `>= 4` states or concurrency).
 
 ```mermaid
 stateDiagram-v2
     [*] --> Draft
-    Draft --> Validated: ValidateEligibility()
-    Draft --> Ineligible: ValidateEligibility() [Failure]
-    Validated --> Submitted: SubmitOrder()
-    Submitted --> Confirmed: ProcessPayment() [Success]
-    Submitted --> Failed: ProcessPayment() [Failure]
+    Draft --> Validated: Validate [eligible]
+    Draft --> Ineligible: Validate [!eligible]
+    Ineligible --> Draft: Revise
+    Validated --> Submitted: Submit
+    Submitted --> Confirmed: PaymentSuccess
+    Submitted --> Failed: PaymentFailure
+    Failed --> Submitted: Retry
+    Failed --> Draft: Cancel
     Confirmed --> [*]
 ```
+
+| State | Event / Intent | Guard | Next State | Effect / Event |
+|---|---|---|---|---|
+| `Draft` | `Validate` | `eligible` | `Validated` | `markEligible()` |
+| `Draft` | `Validate` | `!eligible` | `Ineligible` | `OrderError.Ineligible` |
+| `Ineligible` | `Revise` | `—` | `Draft` | `clearValidation()` |
+| `Validated` | `Submit` | `—` | `Submitted` | `processPayment()` |
+| `Submitted` | `Submit` | `—` | `IGNORE` | `—` |
+| `Submitted` | `PaymentSuccess` | `—` | `Confirmed` | `emitConfirmed()` |
+| `Submitted` | `PaymentFailure` | `—` | `Failed` | `OrderError.PaymentDeclined` |
+| `Failed` | `Retry` | `—` | `Submitted` | `processPayment()` |
+| `Failed` | `Cancel` | `—` | `Draft` | `resetSubmission()` |
+| `Draft` | `PaymentSuccess` | `—` | `DROP` | `—` |
+| `Confirmed` | `Complete` | `—` | `[*]` | `—` |
+
+**Lifecycle Recovery:** `Persisted domain state survives process death; [Submitted] recovers by querying gateway status before allowing Retry.`
 
 ## 6. Domain Error Catalog
 Exhaustive list of domain failures and their business meaning.

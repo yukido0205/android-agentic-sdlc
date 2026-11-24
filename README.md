@@ -18,6 +18,7 @@ Instead of relying on longer prompts that the model eventually forgets, this too
 Asking an agent to build an entire feature in one shot leads to hallucinated APIs and massive diffs.
 * **`/plan-feature`** reconciles PRD and Figma gaps into a single `PLAN.md` with edge cases and ready-to-send Slack questions before any code is written.
 * **`/plan-slicing`** freezes shared interfaces/DTOs in `CONTRACT.md` and splits implementation into vertical steps ($\le 300$ lines per PR). Running `/clear` between `init` $\to$ `plan` $\to$ `step` keeps context fresh and prevents model drift.
+* **`/design-state`** models non-trivial MVI and domain flows as a compact Mermaid `stateDiagram-v2` + Transition & Guard Table (`IGNORE` for double-tap, `DROP` for stale callbacks), validated statically in 0 tokens via `validate-statechart.py` so developers review logic in seconds before code is written.
 
 ### 2. Protects Clean Architecture & Prevents Regression Bugs
 * **`/code-domain`** extracts pure Kotlin UseCases and sealed error models out of bloated ViewModels.
@@ -53,8 +54,8 @@ flowchart LR
         H["hooks/scripts/pre-tool-guard.py<br/>• Blocks android.* in /domain/<br/>• Blocks coordinate taps & raw maestro CLI<br/>• Guards force-push, multi-device & worktree builds"]
     end
 
-    subgraph L3["3. Composable Workflows (11 Skills)"]
-        S["plan-*  •  code-*  •  guard-*<br/>test-*  •  flow-*  •  ship-*<br/>Loaded only when invoked"]
+    subgraph L3["3. Composable Workflows (12 Skills)"]
+        S["plan-*  •  design-state  •  code-*<br/>guard-*  •  test-*  •  flow-*  •  ship-*<br/>Loaded only when invoked"]
     end
 
     L1 --> L2 --> L3
@@ -156,6 +157,7 @@ Full syntax, arguments, and flags are documented in [`docs/COMMANDS.md`](./docs/
 | :--- | :--- | :--- |
 | **Plan** | `/plan-feature` | Turns messy PRDs/Figma links into one lean `PLAN.md` + Slack clarification questions. |
 | **Plan** | `/plan-slicing` | Splits epics into `CONTRACT.md` + vertical steps ($\le 300$ lines) across fresh sessions. |
+| **Design** | `/design-state` | Authors & validates Statecharts (`stateDiagram-v2` + Transition Table via `validate-statechart.py`). |
 | **Code** | `/code-domain` | Extracts pure Kotlin UseCases/Entities with zero Android SDK dependencies. |
 | **Diagnose** | `/test-hunter` | Read-only root-cause investigator; outputs diagnosis without touching code. |
 | **Guard** | `/guard-blast` | Locks an allowlist of editable files and generates a targeted regression matrix. |

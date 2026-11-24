@@ -23,6 +23,8 @@ Before writing any MR description, audit the change:
 3. **Claim Check:**
    - Audit every claim in code comments or commit messages ("X is instantiated by Y", "Z never runs here").
    - Every claim must cite concrete code inspected in this session. Remove or correct unproven assumptions.
+4. **Statechart Alignment Check (Anti-Drift):**
+   - When `CONTRACT.md §3`, `plans/<TICKET>/flow-task.md`, `plans/<TICKET>/flow-bug.md`, or `docs/domain/<feature>.md` defines a Statechart, verify `handleIntent` / state-machine code matches every Transition Table row (including `IGNORE`/`DROP` guards). If implementation evolved a transition, update the Statechart and re-run `python3 skills/design-state/scripts/validate-statechart.py <file>` before shipping.
 
 ---
 
@@ -74,4 +76,12 @@ Brief 2-3 sentence overview of what changed and why.
 ## Blast Radius & Risks
 - **Impacted Areas:** `<screen or domain components>`
 - **Non-Impacted Areas:** Verified `<shared components>` remain untouched.
+
+<!-- Optional: Include when /design-state produced a Statechart for non-trivial logic -->
+## Statechart (Optional)
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    ...
+```
 ```

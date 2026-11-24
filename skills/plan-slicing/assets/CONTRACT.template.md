@@ -32,10 +32,36 @@ interface <Repository/UseCase> {
 }
 ```
 
-## §3 Shared UI State / Intent / Event / Navigation keys
+## §3 Shared Statechart & MVI Contract (UI State / Intent / Event / Navigation)
 
 > Android MVI, `handleIntent` style — see the repo's workflow §1a. One data-class state;
 > finite parts are sealed/enum fields; one-time output is `Event` via `SharedFlow`.
+> **Statechart Rule (`/design-state`):** Required if `>= 4` finite states, nested/parallel regions,
+> async concurrency (debounce/polling/double-submit), or process-death recovery. Otherwise write `Statechart: SKIPPED (<reason>)`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Loading: Refresh
+    Loading --> Ready: LoadSuccess
+    Loading --> Failed: LoadError
+    Failed --> Loading: Refresh
+    Ready --> Loading: Refresh
+    Ready --> [*]
+```
+
+| State | Event / Intent | Guard | Next State | Effect / Event |
+|---|---|---|---|---|
+| `Idle` | `Refresh` | `—` | `Loading` | `fetchData()` |
+| `Loading` | `Refresh` | `—` | `IGNORE` | `—` |
+| `Loading` | `LoadSuccess` | `—` | `Ready` | `renderData()` |
+| `Loading` | `LoadError` | `—` | `Failed` | `ShowError` |
+| `Failed` | `Refresh` | `—` | `Loading` | `fetchData()` |
+| `Ready` | `Refresh` | `—` | `Loading` | `fetchData()` |
+| `Idle` | `LoadSuccess` | `—` | `DROP` | `—` |
+| `Ready` | `Close` | `—` | `[*]` | `—` |
+
+**Lifecycle Recovery:** `Config change preserves UiState in ViewModel; Process death in [Loading] resets to [Idle] and re-triggers Refresh if required.`
 
 ```kotlin
 data class <Feature>UiState(

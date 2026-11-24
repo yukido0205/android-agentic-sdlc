@@ -2,11 +2,11 @@
 
 > ← Back to [README.md](../README.md) | [Tiếng Việt (README_VI.md)](../README_VI.md)
 
-Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for all 11 skills, helper scripts, and pre-tool guards.
+Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for all 12 skills, helper scripts, and pre-tool guards.
 
 ---
 
-## 1. Detailed Skill Reference (11 Core Skills)
+## 1. Detailed Skill Reference (12 Core Skills)
 
 ### 1.1. `plan-feature` — Lean Requirements & User Stories
 - **When to Use:** Starting a new feature from a raw PRD, Figma link, Jira epic, or vague request.
@@ -39,7 +39,28 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.3. `code-domain` — Pure Domain Logic Extraction
+### 1.3. `design-state` — Statechart Modeling & Static Validation
+- **When to Use:** Designing non-trivial state machines ($\ge 4$ states, nested/parallel states, async concurrency/double-submit, or process-death recovery), generating bugfix Before/After state deltas, or reverse-engineering complex ViewModels. Skipped automatically for trivial CRUD.
+- **Trigger / Commands:**
+  ```bash
+  # Mode 1: Forward Design into CONTRACT.md or flow-task.md
+  /design-state plans/EPIC-42/PLAN.md
+
+  # Mode 2: Bug Delta (Before -> After) for state/timing bugs
+  /design-state --delta plans/APP-8092/flow-bug.md
+
+  # Mode 3: Reverse-engineer an existing ViewModel/Manager
+  /design-state app/src/main/java/com/app/checkout/CheckoutViewModel.kt
+
+  # Static Validator (0 tokens): checks reachability, dead-ends, drift, determinism & async safety
+  python3 skills/design-state/scripts/validate-statechart.py plans/EPIC-42/CONTRACT.md
+  ```
+- **Inputs:** `PLAN.md`, `flow-task.md`, `flow-bug.md`, or a Kotlin source file.
+- **Outputs:** Dual-representation Statechart (Mermaid `stateDiagram-v2` + Transition & Guard Table with `IGNORE`/`DROP` + Lifecycle Recovery) validated by `validate-statechart.py`.
+
+---
+
+### 1.4. `code-domain` — Pure Domain Logic Extraction
 - **When to Use:** Refactoring business logic out of fat ViewModels, Activities, or legacy helpers into pure Kotlin Clean Architecture.
 - **Trigger / Command:**
   ```bash
@@ -53,7 +74,7 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.4. `test-hunter` — Read-Only Defect Diagnosis
+### 1.5. `test-hunter` — Read-Only Defect Diagnosis
 - **When to Use:** Analyzing a Jira defect, crash log, or user bug report without modifying code.
 - **Trigger / Command:**
   ```bash
@@ -66,7 +87,7 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.5. `guard-blast` — Blast Radius & Regression Matrix
+### 1.6. `guard-blast` — Blast Radius & Regression Matrix
 - **When to Use:** Post-diagnosis in bug fixing, or when PRD/Figma requirements change mid-sprint.
 - **Trigger / Commands:**
   ```bash
@@ -81,7 +102,7 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.6. `test-author` — Prove-First Maestro Authoring & Static Validation
+### 1.7. `test-author` — Prove-First Maestro Authoring & Static Validation
 - **When to Use:** Proving acceptance criteria or bug reproductions live on a device first via Maestro MCP (`inspect_screen` + batched `run`), then freezing passing, standalone Maestro YAML flows to disk for flat-cost repeatable regression runs.
 - **Trigger / Commands:**
   ```bash
@@ -100,7 +121,7 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.7. `test-runner` — Device Test Execution Engine
+### 1.8. `test-runner` — Device Test Execution Engine
 - **When to Use:** Running frozen Maestro suites for bug reproduction, vertical slice steps, smoke checks, or full regression on an emulator or physical device.
 - **Invocation 1 — Inside Agent Chat (Slash Command & Natural Language):**
   ```text
@@ -148,7 +169,7 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.8. `flow-bug` — End-to-End Bug Lifecycle Orchestrator
+### 1.9. `flow-bug` — End-to-End Bug Lifecycle Orchestrator
 - **When to Use:** Single-command resolution of a Jira bug (*Diagnose → Repro → Fix → Verify → Ship*) with 3 human approval gates.
 - **Trigger / Commands:**
   ```bash
@@ -160,7 +181,7 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.9. `flow-task` — Standalone Sprint Task Orchestrator
+### 1.10. `flow-task` — Standalone Sprint Task Orchestrator
 - **When to Use:** Single-command delivery of an isolated mid-sprint feature or enhancement without an upfront `CONTRACT.md` (*Understand → Build → Prove → Ship*).
 - **Trigger / Commands:**
   ```bash
@@ -172,7 +193,7 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.10. `flow-queue` — Multi-Task Orchestrator
+### 1.11. `flow-queue` — Multi-Task Orchestrator
 - **When to Use:** Running a batch of bugs and standalone tasks concurrently from one chat prompt in isolated git worktrees with batched Gate approvals.
 - **Trigger / Commands:**
   ```bash
@@ -184,7 +205,7 @@ Complete syntax, arguments, flags, inputs, outputs, and manual setup paths for a
 
 ---
 
-### 1.11. `ship-mr` — Diff Auditing & Review Description Author
+### 1.12. `ship-mr` — Diff Auditing & Review Description Author
 - **When to Use:** After implementation and verification, to audit staged git diffs against test evidence and draft a conventional commit + MR description.
 - **Trigger / Command:**
   ```bash
@@ -252,6 +273,7 @@ android-agentic-sdlc/
 └── skills/
     ├── plan-feature/
     ├── plan-slicing/
+    ├── design-state/
     ├── code-domain/
     ├── test-hunter/
     ├── guard-blast/

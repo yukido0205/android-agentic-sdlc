@@ -68,6 +68,7 @@ Check `plans/<EPIC>/PLAN.md`. Confirm gates passed: every `question-<NN>` in `§
 ### Step 1 — Version the Technical Contract (`init`)
 
 Extract the SMALLEST shared surface every story touches: domain models, Repository/UseCase signatures, UI state/events, navigation keys. Encode rules in types (sealed/enum fields). Android UI state follows MVI `handleIntent` (repo workflow §1a).
+- For non-trivial shared state/concurrency (per `design-state` Skip Rule), invoke `/design-state` to author the Mermaid `stateDiagram-v2` + Transition & Guard Table + Lifecycle Recovery directly in `CONTRACT.md §3`, and run `python3 skills/design-state/scripts/validate-statechart.py plans/<EPIC>/CONTRACT.md` before freezing (otherwise mark `Statechart: SKIPPED (<reason>)`).
 Write `plans/<EPIC>/CONTRACT.md` from `assets/CONTRACT.template.md`. Kotlin patterns → `references/mobile-contracts.md`.
 
 ### Step 2a — List the slices (`init`)
@@ -100,6 +101,7 @@ Run in a **dedicated fresh session** for a single step (`<step-id>`):
    - Record `<step-id>`'s concise `Files`, `Decisions`, and `Tasks` inside `<slice-id>`'s `<details>` block in `PLAN.md §4`, and mark its table row `IN PROGRESS`.
 2. **Phase B — Scoped Implementation:**
    - Scope isolation: code **only** current step `<step-id>`. Reuse existing widgets/utils first.
+   - **Statechart Alignment:** If `CONTRACT.md §3` defines a Statechart, implement `handleIntent` 1-to-1 against its Transition & Guard Table (explicitly coding `IGNORE` / `DROP` branches) and cover every `Error`/`Guard=false`/`IGNORE`/`DROP` row with a unit test.
    - **Code Hygiene Guardrails (`rules/code-hygiene.md`):**
      - *Pre-Code (Lean SOLID):* Do not introduce any new interface, wrapper, or abstraction layer not already frozen in `CONTRACT.md` unless it has 2+ implementations.
      - *During-Code (Why-Only Docs):* Document only non-obvious intent, invariants, and workarounds.

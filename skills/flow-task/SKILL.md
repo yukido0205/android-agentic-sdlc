@@ -21,6 +21,7 @@ Phase: 1|2|3|4|5   Gate passed: 0|1|2|3   Track: fast|sliced   Step: 1/1 (or 1/2
 ## Implicit Contract (Codebase Grounding) ← phase 1 (read-only): existing ViewModels/UseCases/State/Routes
 ## Blast Radius & Allowlist               ← phase 1: Direct Allowlist | Downstream Consumers | Explicit Non-Impact
 ## Anomaly Triangle & Acceptance          ← phase 1: 1-line happy path formula + AC-n bullets (safe fallback, errors, lifecycle)
+## Statechart                             ← phase 1 (via /design-state if non-trivial, else `Statechart: SKIPPED (<reason>)`)
 ## Open Questions & Assumptions           ← phase 1: resolved ones struck through
 ## Decision & Step Ladder                 ← gate 1: user approval + step outline (step-01..step-03 if sliced)
 ## Baseline                               ← unit test classes that ran + counts, before the change
@@ -49,17 +50,20 @@ Phase: 1|2|3|4|5   Gate passed: 0|1|2|3   Track: fast|sliced   Step: 1/1 (or 1/2
      - *Missing/Null Backend Data:* Map to safe state (`UNKNOWN`/empty), never optimistic.
      - *Errors & Resiliency:* Timeouts, 4xx/5xx, offline fallback, retry.
      - *Lifecycle & Stored Invariants:* Process death (`adb shell am kill`), configuration change / rotate, back/reopen.
-5. **Track Selection:**
+5. **Statechart Modeling (via `design-state`):**
+   - Apply `design-state` Skip Rule. If trivial CRUD/UI, record `Statechart: SKIPPED (<reason>)`.
+   - If non-trivial (≥ 4 states, async concurrency/double-submit, or process-death invariant), invoke `design-state` Mode 1 to write the Mermaid `stateDiagram-v2` + Transition & Guard Table (`IGNORE`/`DROP`) + Lifecycle Recovery under `## Statechart`, then validate with `python3 skills/design-state/scripts/validate-statechart.py plans/<TICKET>/flow-task.md`.
+6. **Track Selection:**
    - **Fast:** Diff ≤ 150 lines, ≤ 4 files, 1 self-contained step (`step-01`).
    - **Sliced:** Diff 150–600 lines → split into 2–3 lightweight steps (≤ 300 lines each):
      - `step-01`: Domain/business logic & validation (no-UI).
      - `step-02`: UI layout, MVI wiring, and mock integration.
      - `step-03`: Real integration, error handling, and polish.
-6. **Open Questions:** List ambiguities with persona-aware Slack snippets (`👉 [A]` vs `👉 [B]`) and safe default assumptions.
+7. **Open Questions:** List ambiguities with persona-aware Slack snippets (`👉 [A]` vs `👉 [B]`) and safe default assumptions.
 
 ### 🚦 Gate 1 — Direction & Scope
 
-Present: Implicit Contract summary, Allowlist files, selected Track, Step Ladder, Acceptance lines, and Open Questions.
+Present: Implicit Contract summary, Allowlist files, selected Track, Step Ladder, Statechart (if generated), Acceptance lines, and Open Questions.
 Wait for user decision. Record user response under **Decision & Step Ladder**.
 
 ---
@@ -75,7 +79,7 @@ Wait for user decision. Record user response under **Decision & Step Ladder**.
    - Apply YAGNI & Simplify: flatten nesting with guard clauses, strip debug logs and speculative params.
 5. **Scope Check:** Run `git diff --name-only` against the Direct Impact Allowlist. Max 300 lines diff (excluding `res/`).
 6. **Unit Tests & Decoupled Compile:**
-   - Add unit tests for new logic (at most 1 test file per step).
+   - Add unit tests for new logic (at most 1 test file per step). When a Statechart is present, cover every Transition Table row involving `Error`, `Guard=false`, `IGNORE`, or `DROP`.
    - Run project linter (`ktlintCheck`, `spotlessCheck`, or `detekt`).
    - **Decoupled Compile:** Run `./gradlew assembleDebug` (in `.worktrees/<TICKET>/`, use `python3 scripts/gradle-build.py assembleDebug` or `.agents/scripts/gradle-build.py` to serialize builds via OS `flock`). Build failure → fix once; if it fails again, stop. (Exit `75` / `[BUILD_SLOT_BUSY]` means another worktree is building—retry without editing code.)
 
