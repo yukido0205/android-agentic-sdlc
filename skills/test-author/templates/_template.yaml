@@ -1,14 +1,17 @@
 # ac-01-<slug>.yaml
 # Acceptance Criteria: AC-01 <Description of criterion from PRD/plan>
+# Account Requirement: <optional — e.g. signed-in account with seeded list items>
 # Target App: com.example.app
 appId: com.example.app
+name: "AC-01 <Description of criterion>"
 ---
-# 1. State setup / Navigation to target screen
-- runFlow:
-    file: ../_shared/_login.yaml # or relative helper path
-    optional: true
+# 1. Cold UI reset + idempotent precondition setup
+- launchApp:
+    clearState: false          # preserve signed-in session
+    stopApp: true              # reset stale dialogs, sheets, and backstack
+- runFlow: ../_shared/_nav-<screen>.yaml
 
-# 2. Action steps (Prefer bare XML id or Compose testTag extracted from source code)
+# 2. Action steps (Prefer bare XML id or Compose testTag; use index: 0 for dynamic rows)
 - extendedWaitUntil:
     visible:
       id: "<view_id>"
@@ -17,9 +20,9 @@ appId: com.example.app
 - tapOn:
     id: "<view_id>"
 
-# 3. Assertions (Strictly required: verify PRD/AC behavior)
+# 3. Assertions (Strictly required: verify PRD/AC behavior without hardcoded account data)
 - assertVisible:
-    text: "<Expected text or title>"
+    text: "<Static label or regex>"
 
 - assertVisible:
     id: "<expected_element_id>"

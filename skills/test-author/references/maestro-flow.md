@@ -48,20 +48,22 @@ Never use cryptic single-letter abbreviations like `s3`, `f3`, `s2s4`, `f5`. Fol
    - Batch an entire AC's interactions + assertions into a single `mcp__maestro__run` call and fix any selector mismatch on the spot.
    - If a random app overlay (user guide, promo, rating) blocks the screen, dismiss it and add a specific rule (`when_visible` + `actions`) to `.maestro/_shared/popups.json` (template: `skills/test-author/templates/popups.json`).
 2. **Freeze Standalone Flows:**
-   - Write all passing ACs to `.maestro/<RUN>/<NN-domain>/ac-NN-<slug>.yaml` in batched `Write` calls, each with an active standalone precondition (`launchApp: { clearState: false }` + `_nav-*` / `_setup-*` steps that actively establish required filter/toggle/flag state rather than merely asserting warm state).
+   - Write all passing ACs to `.maestro/<RUN>/<NN-domain>/ac-NN-<slug>.yaml` in batched `Write` calls, each with an active standalone precondition (`launchApp: { clearState: false, stopApp: true }` + `_nav-*` / `_setup-*` steps that actively establish required UI filter/toggle/tab/flag state rather than merely asserting warm state).
    - Use consistent helper naming (`_nav-<screen>.yaml`, `_setup-<state>.yaml`, `_reset-<state>.yaml`) and put reusable helpers in `.maestro/_shared/`. Beware that `launchApp.arguments` / intent extras can behave inconsistently across Android API levels (e.g., API 33 vs API 36, or requiring a second cold start after persisting a setting).
 3. **Validate Statically + 1× File Smoke Check:**
-   - Run `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/`, then run the frozen `.yaml` file(s) once from disk via 1 batch `mcp__maestro__run` call to verify `runFlow` paths and `onFlowComplete` hooks. Still do not re-run `suite-runner.py` in the same session.
+   - Run `python3 skills/test-author/scripts/validate-flow.py .maestro/<RUN>/`, then run the frozen `.yaml` file(s) once from disk via 1 batch `mcp__maestro__run` call to verify `runFlow` paths, initial state normalization, and `onFlowComplete` hooks. Still do not re-run `suite-runner.py` in the same session.
 
 ## One flow = one acceptance line
 
 ```yaml
 # <RUN> AC-n — PRD §<section>: <the acceptance line, verbatim>
+# Account Requirement: <optional — e.g. signed-in account with >= 1 seeded order>
 appId: com.example.app
 name: "AC-n <the line as a sentence>"
 ---
 - launchApp:
     clearState: false          # keep the session the emulator is already signed in with
+    stopApp: true              # clear stale dialogs, bottom sheets, search text, and backstack
 - runFlow: ../_nav/<screen>.yaml
 - tapOn:
     id: "<resource-id>"        # id first (bare XML id or Compose testTag); text only when the node has no id
@@ -71,6 +73,52 @@ name: "AC-n <the line as a sentence>"
     text: "<what the PRD says must not show>"
 - echo: "AC-n: <the line as a sentence> - verified"
 ```
+
+## Initial UI State & Account Portability Patterns
+
+1. **Pre-Seeded Data vs. UI State Setup (Default Division of Work):**
+   - **Data tier (outside Maestro):** Assume QA test accounts already hold required backend fixtures (orders, roles, balances). If the device account lacks required data, document `# Account Requirement:` and stop with `BLOCKED` instead of having every test create data through UI.
+   - **User override:** Only create/clean up data via `_setup-<entity>.yaml` / `_reset-<entity>.yaml` when the prompt explicitly asks to create test data or when the AC itself verifies a create/edit/delete flow.
+   - **UI tier (always inside Maestro):** Flows must always normalize screen UI state (`stopApp: true`, tab selection, filters, toggles, search boxes) idempotently before asserting.
+
+2. **Idempotent UI Normalization (`when` Guard — Never Blindly Toggle):**
+   - Tapping a tab by `id` is idempotent. Tapping a switch/checkbox/filter chip blindly flips the wrong way if it was already enabled. Guard binary setups with `when`:
+   ```yaml
+   # Enable filter only if its active state/badge is not already visible
+   - runFlow:
+       when:
+         notVisible:
+           id: "chip_active_status_selected"
+       commands:
+         - tapOn:
+             id: "chip_active_status"
+   ```
+   - If the AC mutates persisted UI state (sort order, saved filter, toggle), restore it with `onFlowComplete`:
+   ```yaml
+   onFlowComplete:
+     - runFlow: ../_shared/_reset-filter-state.yaml
+   ```
+
+3. **Account- & Device-Agnostic Selectors (Never Hardcode Account Data):**
+   - **Structural selection (`id` + `index: 0`):** Select dynamic list items by element ID/index rather than a user-specific item title:
+   ```yaml
+   - tapOn:
+       id: "order_row_container"
+       index: 0
+   ```
+   - **Cross-screen value match (`copyTextFrom`):** Capture runtime text on Screen A and verify it on Screen B without hardcoding account values:
+   ```yaml
+   - copyTextFrom:
+       id: "order_code_text"
+       index: 0
+   - tapOn:
+       id: "order_row_container"
+       index: 0
+   - assertVisible:
+       text: "${maestro.copiedText}"
+   ```
+   - **Format / static resource assertions:** Use regex (`".*@.*\\..*"`) or `strings.xml` labels rather than real emails, phones, names, or account balances copied from `inspect_screen`.
+   - **Explicit credentials (only when prompt requires login):** Pass via Maestro env vars (`${TEST_EMAIL}`, `${TEST_PASSWORD}`) — never commit plaintext credentials in YAML.
 
 Rules:
 - **Select by id.** XML views: the bare `android:id` name (e.g. `btn_submit` — avoids hardcoded flavor package prefixes). Compose: the `Modifier.testTag` string, verbatim (requires `testTagsAsResourceId = true`). On a Compose row the id sits on the tappable node and the label on its child: tap by id, assert the label by text.
