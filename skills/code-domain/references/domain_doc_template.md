@@ -4,7 +4,6 @@ Use this markdown structure to document extracted business rules in `docs/domain
 
 ---
 
-```markdown
 # Domain Specification: [Feature Name]
 
 ## 1. Overview & Context
@@ -77,4 +76,3 @@ Exhaustive list of domain failures and their business meaning.
 - **Use Cases**: [`CalculateDiscountUseCase`](file:///path/to/CalculateDiscountUseCase.kt)
 - **Domain Models**: [`Cart`](file:///path/to/Cart.kt), [`DiscountPolicy`](file:///path/to/DiscountPolicy.kt)
 - **Unit Tests**: [`CalculateDiscountUseCaseTest`](file:///path/to/CalculateDiscountUseCaseTest.kt)
-```

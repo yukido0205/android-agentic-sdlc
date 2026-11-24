@@ -78,7 +78,7 @@ recorded phase. Never redo a passed gate.
       server/session → token refresh, offline.
    d. **Timing** — the fix depends on order, threads, delays, callbacks or lifecycle timing. List the
       interleavings it must survive; each one becomes a device or unit line.
-   e. **Statechart Delta (when `c` or `d` fires on Full track)** — invoke `design-state` Mode 2 (`--delta`) to render a **Before → After** `stateDiagram-v2` + Transition Table delta in `plans/<TICKET>/flow-bug.md` (highlighting missing `IGNORE`/`DROP` or broken exits) and validate with `python3 skills/design-state/scripts/validate-statechart.py plans/<TICKET>/flow-bug.md`.
+   e. **Statechart Delta (when `c` or `d` fires on Full track)** — invoke `design-state` Mode 2 (`--delta`) to render `### Before (Buggy)` (auto-ignored by validator) vs `### After (Fixed)` `stateDiagram-v2` + Transition Table in `plans/<TICKET>/flow-bug.md` (highlighting missing `IGNORE`/`DROP` or broken exits) and validate with `python3 skills/design-state/scripts/validate-statechart.py plans/<TICKET>/flow-bug.md`.
    Then list only the questions the code and PRD cannot answer. Check the PRD and the
    other platform's fix if the user mentions one.
 

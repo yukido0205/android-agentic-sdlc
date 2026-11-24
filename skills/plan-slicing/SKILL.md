@@ -68,8 +68,8 @@ Check `plans/<EPIC>/PLAN.md`. Confirm gates passed: every `question-<NN>` in `§
 ### Step 1 — Version the Technical Contract (`init`)
 
 Extract the SMALLEST shared surface every story touches: domain models, Repository/UseCase signatures, UI state/events, navigation keys. Encode rules in types (sealed/enum fields). Android UI state follows MVI `handleIntent` (repo workflow §1a).
-- For non-trivial shared state/concurrency (per `design-state` Skip Rule), invoke `/design-state` to author the Mermaid `stateDiagram-v2` + Transition & Guard Table + Lifecycle Recovery directly in `CONTRACT.md §3`, and run `python3 skills/design-state/scripts/validate-statechart.py plans/<EPIC>/CONTRACT.md` before freezing (otherwise mark `Statechart: SKIPPED (<reason>)`).
-Write `plans/<EPIC>/CONTRACT.md` from `assets/CONTRACT.template.md`. Kotlin patterns → `references/mobile-contracts.md`.
+Write `plans/<EPIC>/CONTRACT.md` from `assets/CONTRACT.template.md` (Kotlin patterns → `references/mobile-contracts.md`).
+- For non-trivial shared state/concurrency (per `design-state` Skip Rule), invoke `/design-state` to populate the Mermaid `stateDiagram-v2` + Transition & Guard Table + Lifecycle Recovery in `CONTRACT.md §3`, then run `python3 skills/design-state/scripts/validate-statechart.py plans/<EPIC>/CONTRACT.md` before freezing (otherwise mark `Statechart: SKIPPED (<reason>)`).
 
 ### Step 2a — List the slices (`init`)
 

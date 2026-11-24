@@ -38,13 +38,17 @@ RESET = "\033[0m"
 MAX_COGNITIVE_STATES = 12
 
 SKIPPED_RE = re.compile(r"Statechart:\s*SKIPPED\b", re.IGNORECASE)
+IGNORE_MARKER_RE = re.compile(r"(?:%%\s*statechart-ignore\b|<!--\s*statechart-ignore\s*-->)", re.IGNORECASE)
+BEFORE_HEADING_RE = re.compile(r"^(#{1,6})\s+before(?:\s*\(|\s*:|\s*$)", re.IGNORECASE)
+HEADING_RE = re.compile(r"^(#{1,6})\s+\S")
 LIFECYCLE_RE = re.compile(
     r"(Lifecycle\s+Recovery|Process\s+death|SavedStateHandle|Config(?:uration)?\s+change)",
     re.IGNORECASE,
 )
 
-MERMAID_OPEN_RE = re.compile(r"^\s*```+\s*mermaid\s*$", re.IGNORECASE)
-FENCE_CLOSE_RE = re.compile(r"^\s*```+\s*$")
+MERMAID_OPEN_RE = re.compile(r"^\s*(`{3,})\s*mermaid\s*$", re.IGNORECASE)
+FENCE_OPEN_RE = re.compile(r"^\s*(`{3,})\s*\S*")
+FENCE_CLOSE_RE = re.compile(r"^\s*(`{3,})\s*$")
 STATE_DIAGRAM_HDR_RE = re.compile(r"^\s*stateDiagram(?:-v2)?\b")
 COMPOSITE_OPEN_RE = re.compile(
     r'^\s*state\s+(?:"([^"]+)"\s+as\s+)?([A-Za-z0-9_.-]+)\s*\{\s*$'
@@ -284,40 +288,76 @@ def _match_table_headers(headers: list[str]) -> Optional[dict[str, int]]:
     return None
 
 
-def _extract_statecharts(content: str) -> list[ParsedStatechart]:
+def _extract_statecharts(content: str) -> List[ParsedStatechart]:
     """Extract Mermaid stateDiagram blocks and Transition Tables from markdown."""
     lines = content.splitlines()
-    charts: list[ParsedStatechart] = []
+    charts: List[ParsedStatechart] = []
 
-    mermaids: list[tuple[int, MermaidGraph]] = []
-    tables: list[tuple[int, list[TableRow]]] = []
+    mermaids: List[Tuple[int, MermaidGraph]] = []
+    tables: List[Tuple[int, List[TableRow]]] = []
 
     i = 0
-    in_non_mermaid_fence = False
+    non_mermaid_fence_len = 0
+    ignored_heading_level: Optional[int] = None
+    ignore_next_block = False
+
     while i < len(lines):
         line = lines[i]
 
-        if in_non_mermaid_fence:
-            if FENCE_CLOSE_RE.match(line):
-                in_non_mermaid_fence = False
+        if non_mermaid_fence_len > 0:
+            m_close = FENCE_CLOSE_RE.match(line)
+            if m_close and len(m_close.group(1)) >= non_mermaid_fence_len:
+                non_mermaid_fence_len = 0
             i += 1
             continue
 
-        if MERMAID_OPEN_RE.match(line):
-            start_line = i + 1
-            block_lines: list[str] = []
+        # Track `### Before` / `#### Before (Buggy)` sections for Mode 2 (--delta)
+        m_hdr = HEADING_RE.match(line.strip())
+        if m_hdr:
+            lvl = len(m_hdr.group(1))
+            if BEFORE_HEADING_RE.match(line.strip()):
+                ignored_heading_level = lvl
+                i += 1
+                continue
+            if ignored_heading_level is not None and lvl <= ignored_heading_level:
+                ignored_heading_level = None
+
+        if IGNORE_MARKER_RE.search(line):
+            ignore_next_block = True
             i += 1
-            while i < len(lines) and not FENCE_CLOSE_RE.match(lines[i]):
+            continue
+
+        m_mermaid = MERMAID_OPEN_RE.match(line)
+        if m_mermaid:
+            fence_len = len(m_mermaid.group(1))
+            start_line = i + 1
+            block_lines: List[str] = []
+            i += 1
+            while i < len(lines):
+                m_close = FENCE_CLOSE_RE.match(lines[i])
+                if m_close and len(m_close.group(1)) >= fence_len:
+                    break
                 block_lines.append(lines[i])
                 i += 1
-            graph = _parse_mermaid_block(block_lines, start_line)
-            if graph is not None:
-                mermaids.append((start_line, graph))
+
+            block_ignored = (
+                ignored_heading_level is not None
+                or ignore_next_block
+                or any(IGNORE_MARKER_RE.search(bl) for bl in block_lines)
+            )
+            ignore_next_block = False
+
+            if not block_ignored:
+                graph = _parse_mermaid_block(block_lines, start_line)
+                if graph is not None:
+                    mermaids.append((start_line, graph))
             i += 1
             continue
 
-        if re.match(r"^\s*```+\s*\S*", line):
-            in_non_mermaid_fence = True
+        m_fence = FENCE_OPEN_RE.match(line)
+        if m_fence:
+            non_mermaid_fence_len = len(m_fence.group(1))
+            ignore_next_block = False
             i += 1
             continue
 
@@ -328,7 +368,7 @@ def _extract_statecharts(content: str) -> list[ParsedStatechart]:
             col_map = _match_table_headers(hdr_cells) if _is_separator_row(sep_cells) else None
             if col_map is not None:
                 table_start = i + 1
-                rows: list[TableRow] = []
+                rows: List[TableRow] = []
                 i += 2
                 while i < len(lines) and lines[i].strip().startswith("|"):
                     cells = _split_md_row(lines[i])
@@ -350,9 +390,15 @@ def _extract_statecharts(content: str) -> list[ParsedStatechart]:
                                 )
                             )
                     i += 1
-                tables.append((table_start, rows))
+
+                table_ignored = (ignored_heading_level is not None) or ignore_next_block
+                ignore_next_block = False
+                if not table_ignored:
+                    tables.append((table_start, rows))
                 continue
 
+        if line.strip():
+            ignore_next_block = False
         i += 1
 
     # Pair each Mermaid diagram with the first Transition Table that follows it

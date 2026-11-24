@@ -59,8 +59,8 @@ Invoke up to **3 concurrent background sub-agents** (queued in waves if >3 ticke
 
 When Phase 1 sub-agents finish, present **one consolidated Gate 1 table** in the main chat:
 
-| Ticket | Type | Track | Root Cause / Implicit Contract | Allowlist Scope | Open Questions |
-| :--- | :--- | :--- | :--- | :--- | :--- |
+| Ticket | Type | Track | Root Cause / Implicit Contract | Statechart | Allowlist Scope | Open Questions |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 
 Wait for the user's single batched reply (e.g., *"Approve all"*, or *"Approve PAY-101; for APP-105 use option B"*).
 

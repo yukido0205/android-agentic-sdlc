@@ -37,18 +37,37 @@ This domain specification governs cart calculations, loyalty discounts, and coup
 
 ---
 
-## 5. State Transition Flow
+## 5. Statechart & Transition Rules
 
 ```mermaid
 stateDiagram-v2
     [*] --> CartEvaluation
-    CartEvaluation --> OrderRejected: Subtotal < $10.00
-    CartEvaluation --> PricingCalculated: Subtotal >= $10.00
-    PricingCalculated --> PaymentProcessing: User Confirms Checkout
-    PaymentProcessing --> OrderCompleted: Payment Success
-    PaymentProcessing --> PaymentFailed: Payment Error
+    CartEvaluation --> OrderRejected: Evaluate [subtotal < 10]
+    CartEvaluation --> PricingCalculated: Evaluate [subtotal >= 10]
+    OrderRejected --> CartEvaluation: UpdateCart
+    PricingCalculated --> PaymentProcessing: ConfirmCheckout
+    PaymentProcessing --> OrderCompleted: PaymentSuccess
+    PaymentProcessing --> PaymentFailed: PaymentError
+    PaymentFailed --> PaymentProcessing: Retry
+    PaymentFailed --> CartEvaluation: Cancel
     OrderCompleted --> [*]
 ```
+
+| State | Event / Intent | Guard | Next State | Effect / Event |
+|---|---|---|---|---|
+| `CartEvaluation` | `Evaluate` | `subtotal < 10` | `OrderRejected` | `CheckoutError.MinimumOrderNotMet` |
+| `CartEvaluation` | `Evaluate` | `subtotal >= 10` | `PricingCalculated` | `calculateDiscounts()` |
+| `OrderRejected` | `UpdateCart` | `—` | `CartEvaluation` | `recalculateSubtotal()` |
+| `PricingCalculated` | `ConfirmCheckout` | `—` | `PaymentProcessing` | `submitPayment()` |
+| `PaymentProcessing` | `ConfirmCheckout` | `—` | `IGNORE` | `—` |
+| `PaymentProcessing` | `PaymentSuccess` | `—` | `OrderCompleted` | `emitOrderReceipt()` |
+| `PaymentProcessing` | `PaymentError` | `—` | `PaymentFailed` | `ShowPaymentRetry` |
+| `PaymentFailed` | `Retry` | `—` | `PaymentProcessing` | `submitPayment()` |
+| `PaymentFailed` | `Cancel` | `—` | `CartEvaluation` | `clearPaymentError()` |
+| `CartEvaluation` | `PaymentSuccess` | `—` | `DROP` | `—` |
+| `OrderCompleted` | `Done` | `—` | `[*]` | `—` |
+
+**Lifecycle Recovery:** `Cart items & discount code survive config change/process death via persisted CartRepository; [PaymentProcessing] checks order payment status on resume before allowing Retry.`
 
 ---
 

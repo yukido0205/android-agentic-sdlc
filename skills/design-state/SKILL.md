@@ -69,7 +69,8 @@ Follow `references/statechart-patterns.md` for standard Android MVI patterns:
 3. **Lifecycle Recovery (1–2 lines):**
    - Explicitly state what happens on **Process death**, **Configuration change**, and **Background/Reopen** (e.g., `Process death in [Editing] -> restore draft via SavedStateHandle; in [Submitting] -> reset to [Editing] with Retry banner`).
 4. **Mode 2 (`--delta`) Addendum:**
-   - Show only the affected states/transitions with a **Before (Buggy)** vs **After (Fixed)** transition diff so the Gate 1 reviewer sees the exact broken arrow and verifies no side effects on neighboring states.
+   - Put the buggy snapshot under a `### Before (Buggy)` heading (or tag the Mermaid block with `%% statechart-ignore` and the table with `<!-- statechart-ignore -->`) and the target state machine under `### After (Fixed)`.
+   - `validate-statechart.py` automatically skips `### Before...` / `%% statechart-ignore` blocks and strictly validates the `### After (Fixed)` Statechart, so the reviewer sees the exact broken arrow without false-positive validator failures.
 
 ### Step 3 — Mechanical Validation (0 Tokens)
 Before presenting at Gate 1 or freezing `CONTRACT.md`, **always** run:

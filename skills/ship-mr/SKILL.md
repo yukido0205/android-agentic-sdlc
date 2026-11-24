@@ -77,11 +77,5 @@ Brief 2-3 sentence overview of what changed and why.
 - **Impacted Areas:** `<screen or domain components>`
 - **Non-Impacted Areas:** Verified `<shared components>` remain untouched.
 
-<!-- Optional: Include when /design-state produced a Statechart for non-trivial logic -->
-## Statechart (Optional)
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    ...
-```
+<!-- Optional: If /design-state generated a Statechart, replace this comment with the validated ```mermaid stateDiagram-v2 ... ``` block -->
 ```

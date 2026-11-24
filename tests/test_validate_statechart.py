@@ -276,6 +276,86 @@ stateDiagram-v2
         self.assertEqual(payload["errors"], 0)
         self.assertEqual(payload["validated_files"], 1)
 
+    def test_delta_mode_before_section_is_ignored_and_after_is_validated(self):
+        md = """# APP-8092 flow bug
+
+## Fix-shape checks
+
+### Before (Buggy)
+```mermaid
+stateDiagram-v2
+    [*] --> Submitting
+    Submitting --> StuckDeadEnd: Timeout
+```
+
+| State | Event / Intent | Guard | Next State | Effect / Event |
+|---|---|---|---|---|
+| `Submitting` | `Timeout` | `—` | `StuckDeadEnd` | `—` |
+
+### After (Fixed)
+```mermaid
+stateDiagram-v2
+    [*] --> Editing
+    Editing --> Submitting: Submit
+    Submitting --> Submitted: Success
+    Submitting --> Error: Timeout
+    Error --> Submitting: Retry
+    Submitted --> [*]
+```
+
+| State | Event / Intent | Guard | Next State | Effect / Event |
+|---|---|---|---|---|
+| `Editing` | `Submit` | `—` | `Submitting` | `callApi()` |
+| `Submitting` | `Submit` | `—` | `IGNORE` | `—` |
+| `Submitting` | `Success` | `—` | `Submitted` | `done()` |
+| `Submitting` | `Timeout` | `—` | `Error` | `ShowRetry` |
+| `Error` | `Retry` | `—` | `Submitting` | `callApi()` |
+| `Editing` | `Success` | `—` | `DROP` | `—` |
+| `Submitted` | `Done` | `—` | `[*]` | `—` |
+
+**Lifecycle Recovery:** `Process death in [Submitting] resets to [Editing].`
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._write_md(Path(tmp), "flow-bug.md", md)
+            errors, warnings, skipped = validate_sc.validate_file(p)
+            self.assertFalse(skipped)
+            self.assertEqual(errors, [])
+            self.assertEqual(warnings, [])
+
+    def test_explicit_ignore_markers_skip_buggy_diagram_and_table(self):
+        md = """# Ignore marker test
+
+```mermaid
+%% statechart-ignore
+stateDiagram-v2
+    [*] --> DeadEnd
+```
+
+<!-- statechart-ignore -->
+| State | Event / Intent | Guard | Next State | Effect / Event |
+|---|---|---|---|---|
+| `DeadEnd` | `Nothing` | `—` | `IGNORE` | `—` |
+
+""" + VALID_STATECHART_MD
+        with tempfile.TemporaryDirectory() as tmp:
+            p = self._write_md(Path(tmp), "ignored.md", md)
+            errors, warnings, _ = validate_sc.validate_file(p)
+            self.assertEqual(errors, [])
+            self.assertEqual(warnings, [])
+
+    def test_repo_skills_directory_passes_statechart_validation(self):
+        proc = subprocess.run(
+            [sys.executable, str(VALIDATE_SC_PATH), str(REPO_ROOT / "skills"), "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["errors"], 0)
+        self.assertEqual(payload["warnings"], 0)
+        self.assertGreaterEqual(payload["validated_files"], 5)
+
 
 if __name__ == "__main__":
     unittest.main()
