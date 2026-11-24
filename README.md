@@ -1,519 +1,167 @@
 # Android Agentic SDLC (`android-agentic-sdlc`)
 
-> 🌐 **Language:** **English** | [Tiếng Việt (README_VI.md)](./README_VI.md)  
-> 📐 **Architecture & Case Studies:** [English (OVERVIEW.md)](./OVERVIEW.md) | [Tiếng Việt (OVERVIEW_VI.md)](./OVERVIEW_VI.md)
+> 🌐 **Language:** **English** | [Tiếng Việt (README_VI.md)](./README_VI.md)
+>
+> 📖 **Reference:** [Command Reference & Manual Setup](./docs/COMMANDS.md)
 
-> **A production-grade engineering harness for Android & Kotlin teams.**  
-> Powered by **11 Specialized SDLC Agent Skills**, **1 Always-On Core Rule (`rules/code-hygiene.md`)**, and **1 Mechanical PreToolUse Hook (`hooks/hooks.json`)**—built to turn AI coding assistants from unpredictable code generators into disciplined, regression-free mobile engineering partners.
+A practical set of rules, pre-tool hooks, and composable workflows for Android developers using **Claude Code**, **Gemini CLI**, or **Antigravity**.
+
+AI coding assistants are fast at writing isolated functions, but in a multi-module Android codebase they tend to guess missing specs, dump 2,000-line PRs, leak `android.*` imports into domain logic, and edit unrelated files when fixing bugs.
+
+Instead of relying on longer prompts that the model eventually forgets, this toolkit adds lightweight, verifiable guardrails so you can ship small, clean PRs and verify them on an emulator before opening a Merge Request.
 
 ---
 
-## 1. Why `android-agentic-sdlc`? (Mindset & Core Value)
+## What It Does for Daily Android Development
 
-When AI agents are dropped into real-world Android codebases without mobile-specific guardrails, they fail in predictable ways: they jump straight into coding from ambiguous PRDs, generate massive unreviewable PRs, leak `android.*` dependencies into domain logic, accidentally modify adjacent modules, and burn hundreds of thousands of tokens running UI tests.
+### 1. Turns Vague PRDs into Small, Reviewable PRs ($\le 300$ lines)
+Asking an agent to build an entire feature in one shot leads to hallucinated APIs and massive diffs.
+* **`/plan-feature`** reconciles PRD and Figma gaps into a single `PLAN.md` with edge cases and ready-to-send Slack questions before any code is written.
+* **`/plan-slicing`** freezes shared interfaces/DTOs in `CONTRACT.md` and splits implementation into vertical steps ($\le 300$ lines per PR). Running `/clear` between `init` $\to$ `plan` $\to$ `step` keeps context fresh and prevents model drift.
 
-`android-agentic-sdlc` solves this by replacing ad-hoc prompting with a **deterministic SDLC engineering system**:
+### 2. Protects Clean Architecture & Prevents Regression Bugs
+* **`/code-domain`** extracts pure Kotlin UseCases and sealed error models out of bloated ViewModels.
+* **`hooks/scripts/pre-tool-guard.py` (`<20ms`, 0 tokens)** runs before file writes to mechanically block `import android.*` or `import androidx.*` inside `/domain/`.
+* **`/test-hunter` + `/guard-blast`** separate investigation from editing: the agent must prove the root cause in read-only mode and lock an explicit **Allowlist** of files before touching production code.
 
-| Engineering Bottleneck | ❌ Typical Unconstrained AI Agent | ✅ With `android-agentic-sdlc` |
+### 3. Verifies Changes on Device Without Token Bloat
+Once code is written, `/test-author` proves each AC live on a device via **Maestro MCP** (`inspect_screen` + batched `run`), then freezes the passing steps into deterministic YAML flows validated by `validate-flow.py` (with `extract-selectors.py` as a static fallback). On subsequent runs, `suite-runner.py` executes frozen flows in a separate terminal window so device logs never flood your LLM context.
+
+To avoid wasting time or API credits, test execution is routed based on actual benchmarks:
+
+| Scenario | Approach | Measured Result |
 | :--- | :--- | :--- |
-| **Ambiguous Requirements** | Guesses missing edge cases and starts coding immediately, or spawns 5 fragmented planning docs. | **`/plan-feature`** reconciles PRD/Figma into a single `PLAN.md` with Anomaly Triangle stories & ready-to-send Slack questions. |
-| **Monolithic PRs & Context Rot** | Plans an entire epic in one session, hallucinating file paths and producing 2,000+ line PRs. | **`/plan-slicing`** enforces **3-Tier JIT Slicing** across isolated `/clear` sessions—capping every step MR at **$\le 300$ lines**. |
-| **Tangled Android Architecture** | Mixes `Context`, `SharedPreferences`, and UI state inside 1,500-line ViewModels; forgets Clean Architecture rules mid-chat. | **`/code-domain`** extracts pure Kotlin UseCases, while **`pre-tool-guard.py`** mechanically blocks `import android.*` in `/domain/`. |
-| **Trial-and-Error Bug Fixing** | Immediately mutates code based on superficial stack-trace guesses, causing silent regressions elsewhere. | **`/test-hunter`** (strictly read-only) diagnoses root cause first; **`/guard-blast`** locks an explicit **Allowlist** of editable files. |
-| **Flaky E2E Tests & Token Bleed** | Writes hardcoded `point: x, y` taps, polls logs in loops, and runs tests inside bloated coding sessions, burning millions of cached tokens. | **`/test-author`** proves ACs live via Maestro MCP then freezes semantic YAML; **`suite-runner.py`** block-waits with live ANSI streaming, 1-read failure digests, and clean-context test subagents in `/flow-*`. |
+| **One-off UI check / layout debug** | Direct Maestro MCP | **~$0.20 cheaper** on first run (skips YAML freezing & validation). |
+| **Feature / Bug fix ($\ge 2$ runs)** | `test-author` (prove & freeze) $\to$ `suite-runner.py` | **Breaks even on run #2 (-9%)**; saves **31% in total API cost** by run #10. |
+| **Regression suite (frozen YAMLs)** | `suite-runner.py` (Native Python) | **~$0.71 per run** (37% cheaper across 4 ACs; cost stays flat as test count grows). |
 
-### Four Core Engineering Pillars
-
-1. **Context Hygiene via 3-Tier Just-In-Time (JIT) Slicing:** LLMs lose accuracy when forced to hold an entire epic in context. We persist state in lean files (`PLAN.md` & `CONTRACT.md`) and intentionally wipe session memory (`/clear`) between **Lead Contract Init $\to$ Slice Outline $\to$ Step Implementation**.
-2. **Native Offloaded Execution (Flat Token Overhead):** Keep deterministic work out of per-step LLM loops. Static validation, lifecycle guardrails (`<20ms`), and high-volume Maestro test orchestration run in native Python scripts—keeping agent orchestration overhead flat regardless of suite size instead of scaling linearly with every test step.
-3. **Diagnosis Before Mutation & Blast Radius Containment:** Investigation and modification are strictly separated. An agent cannot touch a line of production code until root cause is proven (`test-hunter`) and an editable file allowlist is locked (`guard-blast`).
-4. **Human-in-the-Loop at High-Leverage Gates:** Instead of fatiguing developers with constant micro-prompts—or running blindly to completion—workflows pause at **3 high-leverage decision gates** (*Approve Diagnosis $\to$ Approve Reproduction $\to$ Approve Fix*).
+*\*Measured across 4 ACs on 2 Android emulators (fresh sessions, median across repeated rounds, accounting for prompt-cache pricing).*
 
 ---
 
-## 2. System Architecture: The 3-Layer Agentic Defense
+## How It Works: 3 Lightweight Layers
 
-Rather than stuffing every instruction into bloated prompts, this repository separates concerns by **how strictly and how often** a behavior must be enforced:
+Rather than stuffing every instruction into one giant system prompt, rules are separated by how strictly they need to be enforced:
 
 ```mermaid
 flowchart LR
-    subgraph L1["🛡️ Layer 1: Soft Guardrail (Always-On Rule)"]
-        R["rules/code-hygiene.md<br/>• Pre-Code: Lean SOLID<br/>• During-Code: Why-Only Docs<br/>• Post-Code: YAGNI Simplify"]
+    subgraph L1["1. Always-On Rule (Soft)"]
+        R["rules/code-hygiene.md<br/>• Keep SOLID lean<br/>• Comments explain 'why' only<br/>• Strip debug logs & test-only APIs"]
     end
 
-    subgraph L2["🔒 Layer 2: Hard Gate (<20ms Mechanical Hook)"]
-        H["hooks/pre-tool-guard.py<br/>• Blocks android.* in /domain/<br/>• Blocks point: taps in Maestro<br/>• Blocks raw maestro CLI & git --force"]
+    subgraph L2["2. PreToolUse Hook (<20ms, 0 Tokens)"]
+        H["hooks/scripts/pre-tool-guard.py<br/>• Blocks android.* in /domain/<br/>• Blocks coordinate taps & raw maestro CLI<br/>• Guards force-push, multi-device & worktree builds"]
     end
 
-    subgraph L3["🛠️ Layer 3: On-Demand Workflows (11 SDLC Skills)"]
+    subgraph L3["3. Composable Workflows (11 Skills)"]
         S["plan-*  •  code-*  •  guard-*<br/>test-*  •  flow-*  •  ship-*<br/>Loaded only when invoked"]
     end
 
     L1 --> L2 --> L3
 ```
 
-### 🛡️ Layer 1: Always-On Core Rule (`rules/code-hygiene.md`) — *Soft Invariant*
-Code quality is an invariant, not an optional slash command. Loaded automatically across every coding task with **zero tool-call overhead**:
-- **Pre-Code (Lean SOLID):** Prevents speculative abstractions and single-implementation interfaces.
-- **During-Code (Why-Only Docs):** Bans syntax-level comment noise; requires fact-checked causal claims.
-- **Post-Code (YAGNI Simplify):** Enforces guard clauses (early returns), removes debug logs (`Log.d`), and forbids test-only `public` APIs.
-
-### 🔒 Layer 2: PreToolUse Lifecycle Hook (`hooks/hooks.json` & `pre-tool-guard.py`) — *Hard Mechanical Gate*
-LLMs can forget instructions when context grows; Python scripts do not. Executes natively in **<20ms** outside the LLM loop before `write_file`, `edit_file`, or `run_command` to mechanically block slips:
-- **`[domain-purity-guard]`:** Denies any file write/edit inside `/domain/` that introduces `import android.*` or `import androidx.*`.
-- **`[maestro-static-gate]`:** Denies `.maestro/**/*.yaml` writes/edits that violate `ac-NN-<slug>.yaml` naming, use hardcoded coordinate taps (`point: x, y`), or omit assertions.
-- **`[command-safety-guard]`:** Denies raw `maestro test` CLI invocations (enforcing `suite-runner.py` to prevent context bleed) and forces explicit user confirmation (`force_ask`) on destructive Git/ADB commands (`git reset --hard`, `git push --force`, `adb uninstall`).
-- **`[multi-device-guard]`:** Denies un-isolated `./gradlew ... install...` executions (<20ms) when $\ge 2$ emulators/devices are active without `ANDROID_SERIAL`, preventing cross-deployment collisions between parallel agents.
-
-### 🛠️ Layer 3: 11 Specialized Agent Skills (`skills/`) — *On-Demand Workflows*
-
-| Skill | Directory | Triggers / CLI Command | SDLC Phase | Core Role |
-| :--- | :--- | :--- | :--- | :--- |
-| **`plan-feature`** | `skills/plan-feature` | `/plan-feature <PRD/Brief>` | Plan | Consolidates ambiguous PRDs/Figma into a unified, lean `plans/<EPIC>/PLAN.md`. |
-| **`plan-slicing`** | `skills/plan-slicing` | `/plan-slicing init\|plan\|step` | Plan | Deconstructs Epics into parallel, mockable vertical slices ($\le 300$ lines/MR) via `CONTRACT.md`. |
-| **`code-domain`** | `skills/code-domain` | `/code-domain <file>` | Code (Domain) | Extracts pure Kotlin business logic into UseCases/Entities with zero Android framework dependencies. |
-| **`test-hunter`** | `skills/test-hunter` | `/test-hunter <ticket\|log>` | Test (Diagnosis) | Strictly read-only root cause investigator. Produces diagnostic reports without modifying code. |
-| **`guard-blast`** | `skills/guard-blast` | `/guard-blast <target>` | Guard (Safety) | Computes Blast Radius, locks down an Allowlist of editable files, and derives targeted Regression Matrices. |
-| **`test-author`** | `skills/test-author` | `/test-author <target>` | Test (Authoring) | Proves ACs live via Maestro MCP (`inspect_screen` + batched `run`), then freezes standalone semantic YAML flows validated by `validate-flow.py`. |
-| **`test-runner`** | `skills/test-runner` | `/test-runner <target> [-m ...]` or CLI | Test (Execution) | High-volume suite runner with block-waiting live ANSI terminal, safe overlay triage, 1-read failure digests, and flat-cost native CLI presets. |
-| **`flow-bug`** | `skills/flow-bug` | `/flow-bug <TICKET>` | Flow (Orchestration) | Complete bug lifecycle orchestrator (Understand $\to$ Fix $\to$ Prove $\to$ Ship) with 3 human review gates. |
-| **`flow-task`** | `skills/flow-task` | `/flow-task <TICKET>` | Flow (Orchestration) | Standalone sprint task orchestrator (Understand $\to$ Build $\to$ Prove $\to$ Ship) without an upfront contract. |
-| **`flow-queue`** | `skills/flow-queue` | `/flow-queue <tickets...>` | Flow (Multi-Task) | Single-chat multi-agent orchestrator with isolated worktrees and batched Gate approvals. |
-| **`ship-mr`** | `skills/ship-mr` | `/ship-mr` | Ship (Delivery) | Audits git diffs against test evidence & verified claims; drafts conventional commits and MR bodies. |
+1. **Always-On Code Hygiene (`rules/code-hygiene.md`):** Loaded automatically on every coding task with zero tool overhead. Enforces early-return guard clauses, removes leftover `Log.d` calls, and stops agents from writing filler comments to justify messy code.
+2. **Pre-Tool Mechanical Gate (`hooks/scripts/pre-tool-guard.py`):** LLMs forget instructions when context grows; Python scripts do not. Runs in `<20ms` before `write_file`, `edit_file`, or `run_command` to catch architectural leaks, fragile Maestro flows, and unsafe Git/ADB/Gradle commands.
+3. **Human-in-the-Loop Decision Gates:** Workflows pause at **3 high-leverage checkpoints** (*Approve Diagnosis* $\to$ *Approve Reproduction* $\to$ *Approve Fix*) so you review architecture and behavior rather than line-by-line boilerplate.
 
 ---
 
-## 3. Real-World Synergy: How the Ecosystem Works Together
+## Everyday Workflows
 
-While each skill solves a specific bottleneck, their real value emerges when chained into end-to-end pipelines.
+### Building a Feature (`PRD` $\to$ `PR`)
 
-### Pipeline 1: Feature Development (Raw PRD $\to$ Production MR)
+```bash
+# 1. Normalize PRD/Figma into a single lean plan
+/plan-feature docs/prds/checkout-discount.md
 
-**Scenario:** Building an automated promotional discount feature (`EPIC-42: Customer Checkout Voucher Discount`).
+# 2. Freeze shared contracts, then /clear before planning a slice
+/plan-slicing init EPIC-42
+# /clear
+/plan-slicing plan slice-01
+# /clear
 
-```mermaid
-flowchart LR
-    subgraph S1["1. Plan & Slice (Isolated Sessions)"]
-        direction TB
-        PRD["📄 Raw PRD:<br/>checkout-discount.md"] --> PF["/plan-feature<br/>(plans/EPIC-42/PLAN.md)"]
-        PF --> PS["/plan-slicing init & plan<br/>(CONTRACT.md + step-01..05)"]
-    end
+# 3. Extract pure Kotlin domain logic & implement one step (<= 300 lines)
+/code-domain app/src/main/java/com/app/discount/LegacyDiscountHelper.kt
+/plan-slicing step slice-01 step-01
 
-    subgraph S2["2. Build & Author Tests"]
-        direction TB
-        CD["/code-domain<br/>(ApplyDiscountUseCase)"] --> STEP["/plan-slicing step slice-01 step-01<br/>(+ rules/code-hygiene.md)"]
-        TA["/test-author<br/>(+ validate-flow.py)"]
-    end
+# 4. Prove ACs live via Maestro MCP & freeze validated YAML flows
+/test-author plans/EPIC-42/PLAN.md --domain 04-discount
 
-    subgraph S3["3. Verify & Ship"]
-        direction TB
-        RUN["suite-runner.py -m step<br/>(Live Terminal Test)"] --> MR["/ship-mr<br/>(Audit Diff & Publish MR)"]
-    end
-
-    PS --> CD & TA
-    STEP & TA --> RUN
+# 5. Re-run frozen flows for regression in a fresh session (0 token bleed) & ship
+python3 skills/test-runner/scripts/suite-runner.py .maestro/EPIC-42/04-discount/ -m step
+/ship-mr
 ```
 
-**Step-by-Step Walkthrough:**
-1. **Consolidate Requirements:**
-   ```bash
-   /plan-feature docs/prds/checkout-discount.md
-   ```
-   *Result:* Agent analyzes Figma links and PRD, producing `plans/EPIC-42/PLAN.md` with 3 User Stories and self-contained Slack clarification snippets.
+### Fixing a Bug with Proof (`/flow-bug`)
 
-2. **Establish Contracts & Progressive Vertical Slices (Across Fresh Sessions):**
-   ```bash
-   # Session 1 (Lead): Freeze Contract & Slices Overview table, then /clear
-   /plan-slicing init EPIC-42
+```bash
+/flow-bug APP-8092
+```
 
-   # Session 2 (Dev assigned to slice-01): Plan step outline (step-01..step-05) for slice-01 only, then /clear
-   /plan-slicing plan slice-01
-   ```
-   *Result:* Creates `plans/EPIC-42/CONTRACT.md` specifying interface `VoucherRepository` and data class `DiscountResult`, then outlines `step-01..step-05` ($\le 250$ lines each) for `slice-01` inside `plans/EPIC-42/PLAN.md §4` without hallucinating details for other slices.
-
-3. **Extract Pure Domain & Build One Step Per Fresh Session (Under `rules/code-hygiene.md`):**
-   ```bash
-   # Session 3 (Dev building step-01): Scan code for step-01, micro-plan, extract domain & implement step-01
-   /code-domain app/src/main/java/com/app/discount/LegacyDiscountHelper.kt
-   /plan-slicing step slice-01 step-01
-   ```
-   *Result:* `code-domain` creates pure `CalculateVoucherDiscountUseCase.kt` and `DiscountError.kt` with zero Android dependencies. `rules/code-hygiene.md` automatically enforces Lean SOLID, Why-only comments, and YAGNI simplification.
-
-4. **Author & Validate Device Tests:**
-   ```bash
-   /test-author plans/EPIC-42/PLAN.md --domain 04-discount
-   python3 skills/test-author/scripts/validate-flow.py .maestro/EPIC-42/04-discount/
-   ```
-   *Result:* A deterministic Maestro test flow is generated and statically validated at `.maestro/EPIC-42/04-discount/ac-01-apply-valid-voucher.yaml`.
-
-5. **Verify on Device & Ship:**
-   ```bash
-   python3 skills/test-runner/scripts/suite-runner.py .maestro/EPIC-42/04-discount/ -m step
-   /ship-mr
-   ```
-   *Result:* A separate terminal window opens, streaming live test execution on the emulator. Once all steps pass, `/ship-mr` audits the diff, verifies test logs, and formats a clean MR ready for code review.
+1. **Diagnose & Lock Scope:** `test-hunter` (read-only) finds the root cause; `guard-blast` locks the editable file allowlist $\to$ **Gate 1 (You approve)**.
+2. **Reproduce on Device:** `test-author` proves the defect live via Maestro MCP and freezes a failing repro YAML (`suite-runner.py -m repro` for re-checks) $\to$ **Gate 2 (You approve)**.
+3. **Fix & Verify:** Applies minimal fix under `code-hygiene.md` and runs targeted regression tests via `suite-runner.py` $\to$ **Gate 3 (You approve)** $\to$ `/ship-mr`.
 
 ---
 
-### Pipeline 2: High-Confidence Bug Resolution (Jira $\to$ Verified Fix)
+## Running Parallel Agents Safely on One Mac
 
-**Scenario:** Customer bug `APP-8092: App crashes with NullPointerException when checking out with an empty cart`.
+Running two agents concurrently on one machine usually causes three headaches: `./gradlew installDebug` pushes APKs to *all* active emulators at once, parallel Gradle daemons exhaust Mac RAM, and `git worktree` leaves out gitignored files (`local.properties`, `google-services.json`).
 
-```mermaid
-flowchart LR
-    JIRA(["🐞 Jira APP-8092"]) --> P1
+Three lightweight scripts keep parallel runs isolated:
 
-    subgraph FB["🔄 Autonomous /flow-bug Loop (Stateful: plans/APP-8092/flow-bug.md)"]
-        direction LR
-        P1["1. Diagnose & Lock Scope<br/>• test-hunter (Read-Only)<br/>• guard-blast (Allowlist)"] --> G1{{"🛑 Gate 1<br/>Approve Diagnosis"}}
-        G1 --> P2["2. Prove Defect on Device<br/>• test-author (Repro YAML)<br/>• runner -m repro"]
-        P2 --> G2{{"🛑 Gate 2<br/>Approve Repro"}}
-        G2 --> P3["3. Fix & Prove Safety<br/>• Minimal Fix (code-hygiene)<br/>• runner -m regression"]
-        P3 --> G3{{"🛑 Gate 3<br/>Approve Fix"}}
-    end
+* **`scripts/init-worktree.sh <TICKET>` (`<0.2s`):** Creates `.worktrees/<TICKET>` and automatically symlinks `local.properties`, `keystore.properties`, `google-services.json`, `.agents/`, and `.claude/`.
+* **`scripts/gradle-build.py`:** Uses OS-level `fcntl.flock()` semaphores and `--max-workers=2` so parallel worktrees queue builds cleanly without spiking RAM.
+* **`suite-runner.py --install`:** Acquires a mutex lock on an idle emulator, sets `ANDROID_SERIAL`, installs the APK strictly to that device, and runs Maestro tests in isolation.
 
-    G3 --> MR(["🚀 /ship-mr<br/>(Evidence MR)"])
+```bash
+# Run multiple bugs and standalone tasks concurrently from a single chat prompt
+/flow-queue PAY-101 (bug: crash on rotate), APP-105 (task: add date filter)
 ```
 
 ---
 
-### Pipeline 3: Legacy Modernization & Clean Architecture Extraction
+## Quick Start
 
-**Scenario:** Refactoring a 1,600-line `UserProfileViewModel.kt` that directly reads `SharedPreferences` and makes network calls inside UI handlers.
+### Prerequisites
+* macOS or Linux with Python 3.9+, JDK 17+, and Android SDK (`adb` in `PATH`)
+* [Maestro CLI](https://maestro.mobile.dev/) installed (`curl -fsSL "https://get.maestro.mobile.dev" | bash`)
+* At least one running Android Emulator or connected device
 
-```mermaid
-flowchart LR
-    VM(["📦 Legacy ViewModel<br/>(1,600 lines)"]) --> GB["1. /guard-blast<br/>(Lock Scope to Profile Module)"]
-    GB --> CD["2. /code-domain<br/>(Extract Pure Kotlin UseCases)"]
-    CD --> CH["3. rules/code-hygiene.md<br/>(Lean SOLID, Why-Only Docs, YAGNI)"]
-    CH --> ETA(["✅ suite-runner.py -m regression<br/>(Confirm Zero Regression)"])
-```
+### Installation
 
----
-
-## 4. Prerequisites & Installation Guide
-
-### 4.1. Environment Prerequisites
-- **Operating System:** macOS (recommended for live streaming AppleScript terminal) or Linux.
-- **Runtimes:** Python 3.9+, JDK 17+, Android SDK.
-- **Required CLIs:**
-  - `adb` configured in your system PATH (`adb devices`).
-  - [Maestro CLI](https://maestro.mobile.dev/) installed (`curl -fsSL "https://get.maestro.mobile.dev" | bash`).
-- **Physical Device or Emulator:** An active Android device with USB debugging enabled.
-
-### 4.2. Quick Installation (`install.sh` — Antigravity, Gemini CLI & Claude Code)
-
-Clone this repository once on your machine, then use [`install.sh`](./install.sh) to symlink (or `--copy`) all 11 skills, the always-on rule, and the PreToolUse hook into your Android project or global configuration:
+Clone this repository once, then link or copy the configuration into your Android project (or globally):
 
 ```bash
 git clone https://github.com/yukido0205/android-agentic-sdlc.git
 cd android-agentic-sdlc
 chmod +x install.sh
-```
 
-#### Option A: Install into a Specific Android Project (Workspace Scope — Recommended for Teams)
-```bash
-# Install for both Antigravity/Gemini CLI (.agents/) and Claude Code (.claude/)
+# Install into a specific Android project (supports Antigravity/Gemini CLI & Claude Code)
 ./install.sh --project /path/to/your-android-app --target all
 
-# Or install only for Antigravity & Gemini CLI (.agents/)
-./install.sh --project /path/to/your-android-app --target agy
-
-# Or install only for Claude Code (.claude/)
-./install.sh --project /path/to/your-android-app --target claude
-
-# Note: Add `--copy` if you want to commit the files directly into your Android repo instead of symlinking
-./install.sh --project /path/to/your-android-app --target agy --copy
-```
-
-#### Option B: Install Globally Across All Projects on Your Machine
-```bash
-# Install globally into ~/.gemini/config/ (Antigravity & Gemini CLI) and ~/.claude/ (Claude Code)
+# Or install globally across all projects on your machine
 ./install.sh --global --target all
 ```
 
-### 4.3. Manual Installation Reference (Directory Layout)
-If you prefer manual setup without `install.sh`, place or symlink the folders as follows:
+*(Use `--target agy` for Antigravity/Gemini CLI only, `--target claude` for Claude Code only, or add `--copy` to commit the files directly into your repo. See [`docs/COMMANDS.md`](./docs/COMMANDS.md#3-manual-installation--directory-layout) for manual setup.)*
 
-| Target Platform | Workspace Path (Per-Project) | Global Path (Machine-Wide) |
+---
+
+## Skill Overview
+
+Full syntax, arguments, and flags are documented in [`docs/COMMANDS.md`](./docs/COMMANDS.md).
+
+| Phase | Skill | Purpose |
 | :--- | :--- | :--- |
-| **Antigravity & Gemini CLI** | `<android-repo>/.agents/skills/*`<br>`<android-repo>/.agents/rules/code-hygiene.md`<br>`<android-repo>/.agents/hooks.json`<br>`<android-repo>/.agents/hooks/scripts/pre-tool-guard.py` | `~/.gemini/config/skills/*`<br>`~/.gemini/config/rules/code-hygiene.md`<br>`~/.gemini/config/hooks.json`<br>`~/.gemini/config/hooks/scripts/pre-tool-guard.py` |
-| **Claude Code** | `<android-repo>/.claude/skills/*`<br>`<android-repo>/.claude/rules/code-hygiene.md`<br>`<android-repo>/.claude/hooks/scripts/pre-tool-guard.py` | `~/.claude/skills/*`<br>`~/.claude/rules/code-hygiene.md`<br>`~/.claude/hooks/scripts/pre-tool-guard.py` |
-
----
-
-## 5. Detailed Command Reference (The 11 Core Skills)
-
-Below are the exact triggers, syntax, arguments, inputs, and outputs for all 11 skills:
-
-### 5.1. `plan-feature` — Lean Requirements & User Stories
-- **When to Use:** When starting a new feature from a raw PRD, Figma link, Jira epic, or vague request.
-- **Trigger / Command:**
-  ```bash
-  /plan-feature docs/prds/checkout-discount-prd.md
-  # or
-  /plan-feature "Build a biometric login option for users"
-  ```
-- **Inputs:** Raw requirement text, PRD markdown file, or user prompt.
-- **Outputs:** Creates or updates `plans/<EPIC>/PLAN.md` containing reconciled requirements, self-contained open questions (with persona-aware Slack snippets), Anomaly Triangle User Stories, and technical risks.
-
----
-
-### 5.2. `plan-slicing` — 3-Tier JIT Contract & Ladder Decomposition
-- **When to Use:** When breaking down an epic's User Stories into parallel, reviewable slices ($\le 300$ lines) without causing AI hallucination from scanning the entire epic at once.
-- **Trigger / Commands (3 Isolated Session Tiers — Persist in Files, `/clear` Between Tiers):**
-  ```bash
-  # Tier 1 (Lead Session): Freeze Contract & list high-level Slices Overview (NOT PLANNED), then /clear
-  /plan-slicing init ORDER-DISCOUNT
-
-  # Tier 2 (Slice Owner's Fresh Session): Cut ONLY your assigned slice (e.g. slice-01) into a step outline (step-01..step-05), then /clear
-  /plan-slicing plan slice-01
-
-  # Tier 3 (1 Fresh Session Per Step): Scan code for step-01 only, micro-plan tasks, code, verify & ship MR, then /clear
-  /plan-slicing step slice-01 step-01
-  ```
-- **Inputs:** `plans/<EPIC>/PLAN.md`.
-- **Outputs:** `plans/<EPIC>/CONTRACT.md` (mock interfaces, DTOs) and inline step execution ladders inside `plans/<EPIC>/PLAN.md §4` (Lean 2-File Architecture).
-
----
-
-### 5.3. `code-domain` — Pure Domain Logic Extraction
-- **When to Use:** When refactoring business logic out of fat ViewModels, Activities, or legacy helpers into pure Kotlin Clean Architecture.
-- **Trigger / Command:**
-  ```bash
-  /code-domain app/src/main/java/com/app/user/UserViewModel.kt
-  ```
-- **Inputs:** Target Kotlin source file containing tangled logic and Android framework calls.
-- **Outputs:**
-  - Evaluates complexity (recommends skipping extraction if trivial CRUD).
-  - Generates living domain specification: `docs/domain/<feature_name>.md` and pauses at an Approval Gate.
-  - Creates pure Kotlin UseCases (`ApplyDiscountUseCase.kt`), Entities, and Sealed Errors with zero `android.*` imports.
-
----
-
-### 5.4. `test-hunter` — Read-Only Defect Diagnosis
-- **When to Use:** When analyzing a Jira defect, crash log, or user bug report without modifying code.
-- **Trigger / Command:**
-  ```bash
-  /test-hunter "APP-8092: ANR occurs when user submits checkout with zero quantity items"
-  # or
-  /test-hunter crash-logs/anr-trace.txt
-  ```
-- **Inputs:** Bug description, stack trace, or logcat output.
-- **Outputs:** A structured `DIAGNOSIS` report containing root cause failure mechanism, exact trigger conditions, and list of affected source files. **(Modifies zero code files).**
-
----
-
-### 5.5. `guard-blast` — Blast Radius & Regression Matrix
-- **When to Use:** Post-diagnosis in bug fixing, or when PRD/Figma requirements change mid-sprint.
-- **Trigger / Commands:**
-  ```bash
-  # Mode 1: Mid-flight PRD/design delta
-  /guard-blast spec docs/prds/v1.md docs/prds/v2.md
-
-  # Mode 2: Bug fix blast radius & allowlist definition
-  /guard-blast plans/APP-8092/flow-bug.md
-  ```
-- **Inputs:** Diagnosis from `test-hunter` or diff between PRD documents.
-- **Outputs:** Strict Allowlist of editable files and a prioritized 3-Tier Regression Test Matrix (`plans/<TICKET>/regression-plan.md`).
-
----
-
-### 5.6. `test-author` — Maestro YAML Flow Author & Static Validator (Prove-First → Freeze)
-- **When to Use:** To prove acceptance criteria or bug reproductions live on a device first via Maestro MCP (`inspect_screen` + batched `run`), then freeze passing, standalone Maestro YAML flows to disk for repeatable native regression runs (with `extract-selectors.py` available as a static fallback when MCP is unavailable or a view lacks runtime IDs).
-- **Trigger / Command:**
-  ```bash
-  # Step 1: Prove ACs live via Maestro MCP and freeze standalone YAML flows
-  /test-author plans/APP-8092/flow-bug.md --domain 02-checkout
-
-  # Optional static fallback CLI: Scan XML android:id, Compose testTag & strings.xml by keyword
-  python3 skills/test-author/scripts/extract-selectors.py app/src/main -k "checkout"
-
-  # Step 2: Statically validate authored flows (no coordinate taps, assertions present)
-  python3 skills/test-author/scripts/validate-flow.py .maestro/APP-8092/
-  ```
-- **Inputs:** Acceptance criteria, bug reproduction steps, or `PLAN.md` / `flow-bug.md`.
-- **Outputs:** Validated, standalone Maestro YAML test flow (e.g., `.maestro/APP-8092/02-checkout/ac-01-repro.yaml`) utilizing bare resource IDs, Compose `testTag`, or verified text selectors, ready for repeatable CLI execution via `suite-runner.py`.
-
----
-
-### 5.7. `test-runner` — Device Test Execution Engine
-- **When to Use:** To run single tests, reproduction flows, Figma design checks, or full regression test suites on an emulator or physical device.
-- **Invocation Method 1: Inside Agent Chat Window (Slash Command & Natural Language):**
-  - **Slash Command:**
-    ```text
-    # Run a single vertical slice step in streaming terminal
-    /test-runner .maestro/02-checkout/ -m step
-
-    # Fast in-process bug reproduction run (15s timeout)
-    /test-runner plans/APP-8092/flow-bug.md -m repro
-
-    # Full regression suite run with streaming ANSI monitor
-    /test-runner plans/APP-8092/flow-bug.md -m regression
-
-    # Smoke tests in headless mode (suppresses external terminal, outputs in chat)
-    /test-runner .maestro/ -m smoke --headless
-    ```
-  - **Natural Language Prompts:**
-    - `"run regression"` or `"verify on device"` $\to$ runs regression mode
-    - `"test APP-8092"` or `"verify step-03"` $\to$ runs step mode
-    - `"repro bug APP-8092"` $\to$ runs repro mode
-    - `"run smoke tests"` $\to$ runs smoke mode
-- **Invocation Method 2: Direct CLI Execution (Terminal / Shell / CI):**
-  ```bash
-  # Mode 'repro': Fast in-process run for bug reproduction
-  python3 skills/test-runner/scripts/suite-runner.py plans/APP-8092/flow-bug.md -m repro
-
-  # Mode 'step': Runs a vertical slice step in an external streaming terminal
-  python3 skills/test-runner/scripts/suite-runner.py .maestro/02-checkout/ -m step
-
-  # Mode 'regression': Runs full test suite with state reset, streaming ANSI updates, and resume capability
-  python3 skills/test-runner/scripts/suite-runner.py plans/APP-8092/flow-bug.md -m regression
-
-  # Mode 'smoke': Fast smoke-tagged check for pull requests
-  python3 skills/test-runner/scripts/suite-runner.py .maestro/ -m smoke
-
-  # Headless Flag: Suppresses external terminal (ideal for CI/CD or background runs)
-  python3 skills/test-runner/scripts/suite-runner.py .maestro/ -m regression --headless
-
-  # Decoupled Build & Install for Parallel Agents (Mutex Lock Device Isolation)
-  # Step 1: Compile APK (zero emulator contact)
-  ./gradlew assembleDebug
-
-  # Step 2: Auto-lease available emulator, install APK isolated via ANDROID_SERIAL, and run tests
-  python3 skills/test-runner/scripts/suite-runner.py .maestro/02-checkout/ -m step --install
-  ```
-- **Inputs:** Test directory path, test YAML file, or markdown state file containing a test matrix.
-- **Outputs:** Live ANSI streaming terminal (block-wait), `progress.log`, 1-read failure digests (`debug/digest_*.md`), failure screenshots/reports (`issues/`), and token usage summary.
-
----
-
-### 5.8. `flow-bug` — End-to-End Bug Lifecycle Orchestrator
-- **When to Use:** For single-command, complete resolution of a Jira bug (Diagnose $\to$ Fix $\to$ Prove $\to$ Ship).
-- **Trigger / Commands:**
-  ```bash
-  # Start bug resolution
-  /flow-bug APP-8092
-
-  # Resume an interrupted session
-  /flow-bug resume APP-8092
-  ```
-- **Inputs:** Jira ticket ID or defect title.
-- **Outputs:** Stateful tracking file `plans/<TICKET>/flow-bug.md`, verified code fix, and ready-to-merge branch.
-
----
-
-### 5.9. `flow-task` — Autonomous Standalone Sprint Task Orchestrator
-- **When to Use:** For single-command resolution of an isolated mid-sprint feature or enhancement ticket without an upfront `CONTRACT.md` (Understand $\to$ Build $\to$ Prove $\to$ Ship).
-- **Trigger / Commands:**
-  ```bash
-  # Start standalone task
-  /flow-task APP-105 "Add voucher selection bottom sheet"
-
-  # Resume an interrupted session
-  /flow-task resume APP-105
-  ```
-- **Inputs:** Ticket ID and brief description or attached specs.
-- **Outputs:** Lean single-file tracking state `plans/<TICKET>/flow-task.md`, verified code fix/feature, and ready-to-merge branch.
-
----
-
-### 5.10. `flow-queue` — Multi-Task Orchestrator
-- **When to Use:** When pasting a batch of bugs and standalone tasks into **1 single chat prompt** to run concurrently in isolated worktrees with batched Gate approvals.
-- **Trigger / Commands:**
-  ```bash
-  /flow-queue PAY-101 (bug: crash on rotate), APP-105 (task: add date filter)
-  /flow-queue status
-  ```
-- **Inputs:** List of ticket IDs and short briefs (auto-routed to `flow-bug` or `flow-task`).
-- **Outputs:** Provisioned `.worktrees/<TICKET>` sandboxes and batched Gate 1/2/3 approvals.
-
----
-
-### 5.11. `ship-mr` — Diff Auditing & Review Description Author
-- **When to Use:** After implementation and verification, to audit git diff and generate conventional commit and MR body.
-- **Trigger / Command:**
-  ```bash
-  /ship-mr
-  ```
-- **Inputs:** Staged git diff and test output logs.
-- **Outputs:** Formal conventional commit message and Markdown-formatted Merge Request body with embedded test evidence.
-
----
-
-## 6. Parallel Agent Isolation: Running 2 Agents on 1 Mac with 2 Emulators
-
-When running 2 autonomous AI Agents concurrently on a single Mac (e.g. Agent A fixing bug `PAY-101` on `emulator-5554`, Agent B delivering feature `PROJ-202` on `emulator-5556`), standard tools fail in three fatal ways:
-1. **APK Cross-Deployment Collision:** Default `./gradlew installDebug` targets **all running emulators simultaneously**, corrupting test environments across parallel agents.
-2. **Mac RAM Exhaustion (OOM Freezes):** If both agents invoke Gradle with default worker counts (CPU core count $\times 2 = 20+$ workers), macOS memory is rapidly exhausted, freezing the machine.
-3. **Missing Gitignored Configs in Worktrees:** Standard `git worktree add` only checks out tracked files, leaving out vital Android files (`local.properties`, `keystore.properties`, `google-services.json`, `.agents/`, `.claude/`), breaking Gradle builds and stripping agent skills.
-
-`android-agentic-sdlc` provides a comprehensive **Native Isolation Trinity**:
-
-### 🛡️ 1. Native Android Worktree Initializer (`scripts/init-worktree.sh` — <0.2s)
-Generates an isolated workspace per ticket via a fast native shell script (<0.2s):
-```bash
-./scripts/init-worktree.sh PAY-101
-# or with a custom branch:
-./scripts/init-worktree.sh PAY-101 -b feature/pay-checkout
-```
-- **Automatic Setup:** Creates `.worktrees/<TICKET>` and appends `.worktrees/` to root `.gitignore`.
-- **Automatic Symlinks for Vital Android & Agent Files:**
-  - `local.properties` (contains required Android SDK path `sdk.dir`).
-  - `keystore.properties`, `secrets.properties` (signing configurations).
-  - `google-services.json` (at root and across all submodules).
-  - `.agents/` and `.claude/` (replicates all 11 Skills, Rules, and Pre-tool Guard hooks into the worktree).
-- **Clean Git & Shared Daemon:** Leaves `gradle.properties` untouched so `git status` stays clean and sequential worktree builds reuse 1 warm Gradle Daemon (per-build worker throttling `--max-workers=2` is applied at runtime by `gradle-build.py`).
-
-### 🔒 2. OS-Flock Build Lock (`gradle-build.py`) & Mutex Device Lock (`suite-runner.py --install`)
-Eliminates RAM spikes and untargeted installation commands:
-- **Serialized Build Phase (No device touch):** Run `python3 scripts/gradle-build.py assembleDebug` inside `.worktrees/` (or `./gradlew assembleDebug` in single-repo mode). `gradle-build.py` uses OS-level `fcntl.flock()` semaphores (`/tmp/android_gradle_locks/slot-*.lock`, default `1` concurrent build slot, configurable via `ANDROID_SDLC_GRADLE_SLOTS`) and passes `--max-workers=2` so parallel agents never spawn competing Gradle Daemons.
-- **Isolated Install Phase:** Execute `suite-runner.py` with `--install`:
-  ```bash
-  python3 skills/test-runner/scripts/suite-runner.py .maestro/PAY-101/ -m step --install
-  ```
-  `suite-runner.py` automatically:
-  1. Inspects active emulators and **acquires a mutex lock (`/tmp/android_device_locks/<id>.lock`)** on an idle device.
-  2. Sets `ANDROID_SERIAL=<locked_device_id>`.
-  3. Deploys the APK exclusively to that device (`adb -s <locked_device_id> install -r -t -d ...`).
-  4. Runs Maestro test flows against the locked emulator in total isolation.
-
-### ⚡ 3. Mechanical Pre-Tool Gate Against Collisions (`pre-tool-guard.py` — <20ms)
-`pre-tool-guard.py` enforces both device and build safety mechanically:
-- **`[multi-device-guard]`:** Blocks un-isolated `install...` commands without `ANDROID_SERIAL` when 2 or more devices are active, guiding the agent to decoupled build + `suite-runner.py --install`.
-- **`[worktree-build-guard]`:** Blocks raw `./gradlew` inside worktrees (enforces `scripts/gradle-build.py`) and blocks `--stop` while another build slot is actively locked.
-
----
-
-## 7. Repository Directory Structure
-
-```text
-android-agentic-sdlc/
-├── OVERVIEW.md                   # Architectural case studies & rationale (English)
-├── OVERVIEW_VI.md                # Architectural case studies & rationale (Vietnamese)
-├── README.md                     # Usage manual & synergy pipelines (English)
-├── README_VI.md                  # Usage manual & synergy pipelines (Vietnamese)
-├── install.sh                    # 1-click installer for Antigravity, Gemini CLI, and Claude Code
-├── scripts/
-│   ├── gradle-build.py           # OS-flock Gradle build semaphore wrapper for multi-worktree builds
-│   ├── init-worktree.sh          # Native Android Worktree initializer script (<0.2s)
-│   └── init_worktree.py          # Cross-platform Python worktree initializer
-├── hooks/
-│   ├── hooks.json                # PreToolUse lifecycle hook configuration
-│   └── scripts/
-│       └── pre-tool-guard.py     # <20ms mechanical guard (Domain purity, Maestro YAML, CLI, Multi-device & Worktree build safety)
-├── rules/
-│   └── code-hygiene.md           # Always-on rule: Lean SOLID + Why-only Docs + YAGNI Simplify
-└── skills/
-    ├── plan-feature/             # Lean 1-file PRD & requirement normalizer
-    ├── plan-slicing/             # Vertical slice & technical contract planner
-    ├── code-domain/              # Clean Architecture domain logic extractor
-    ├── test-hunter/              # Read-only root cause investigator
-    ├── guard-blast/              # Blast radius & regression guard
-    ├── test-author/              # Maestro YAML test flow generator & validator
-    ├── test-runner/              # High-volume device test runner & monitor
-    ├── flow-bug/                 # End-to-end bug lifecycle orchestrator
-    ├── flow-task/                # Standalone sprint task orchestrator (without CONTRACT.md)
-    ├── flow-queue/               # Single-chat multi-task orchestrator with isolated worktrees
-    └── ship-mr/                  # Diff auditor & Merge Request description author
-```
+| **Plan** | `/plan-feature` | Turns messy PRDs/Figma links into one lean `PLAN.md` + Slack clarification questions. |
+| **Plan** | `/plan-slicing` | Splits epics into `CONTRACT.md` + vertical steps ($\le 300$ lines) across fresh sessions. |
+| **Code** | `/code-domain` | Extracts pure Kotlin UseCases/Entities with zero Android SDK dependencies. |
+| **Diagnose** | `/test-hunter` | Read-only root-cause investigator; outputs diagnosis without touching code. |
+| **Guard** | `/guard-blast` | Locks an allowlist of editable files and generates a targeted regression matrix. |
+| **Verify** | `/test-author` | Proves ACs live via Maestro MCP and freezes validated YAML flows (`validate-flow.py`). |
+| **Verify** | `/test-runner` | Runs frozen Maestro suites in an external terminal with live ANSI streaming & device locks. |
+| **Flow** | `/flow-bug` | End-to-end bug workflow (*Diagnose* $\to$ *Repro* $\to$ *Fix* $\to$ *Verify*) with 3 approval gates. |
+| **Flow** | `/flow-task` | Standalone sprint task workflow without an upfront contract file. |
+| **Flow** | `/flow-queue` | Runs multiple tickets concurrently in isolated git worktrees with batched approvals. |
+| **Ship** | `/ship-mr` | Audits git diffs against test logs and drafts conventional commits + PR descriptions. |
