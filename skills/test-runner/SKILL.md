@@ -55,13 +55,14 @@ The unified test automation system for Android development and QC:
 
 *(Note: `suite-runner.py` automatically initializes background token usage tracking and exports a report upon completion).*
 
-`suite-runner.py` automatically resolves targets (e.g. `plans/<EPIC>/PLAN.md`, `plans/<TICKET>/regression-plan.md`, or `<TICKET>` resolves directly to `.maestro/<TICKET>/regression`).
+`suite-runner.py` automatically resolves targets (e.g. `plans/<EPIC>/PLAN.md`, `plans/<TICKET>/regression-plan.md`, `plans/<TICKET>/regression.flows`, or `<TICKET>` resolves directly to `plans/<TICKET>/regression.flows` in `-m regression` when present, otherwise `.maestro/<TICKET>/regression`).
 
 ### Mapping User Prompts Directly to `suite-runner.py`:
 | User Request | Immediate Action Executed |
 |---|---|
 | `repro bug PROJ-123` or `verify repro` | `python3 skills/test-runner/scripts/suite-runner.py plans/<TICKET>/flow-bug.md -m repro` |
 | `verify @plans/.../PLAN.md` or `regression-plan.md` | `python3 skills/test-runner/scripts/suite-runner.py plans/<EPIC>/PLAN.md -m regression` |
+| `run cross-ticket regression manifest` | `python3 skills/test-runner/scripts/suite-runner.py plans/<TICKET>/regression.flows -m regression` |
 | `verify @plans/... about <topic>` | `python3 skills/test-runner/scripts/suite-runner.py plans/<EPIC>/PLAN.md -m regression --filter "<topic>"` |
 | `verify r-1.yaml` (or any single flow) | `python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/regression/r-1.yaml` |
 | `test PROJ-123` or `verify step-03` | `python3 skills/test-runner/scripts/suite-runner.py .maestro/<EPIC>/<step_folder>/ -m step` |

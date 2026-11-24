@@ -1,0 +1,21 @@
+{
+  "$schema": "https://android-agentic-sdlc.local/schemas/feature-map.v1.json",
+  "version": 1,
+  "description": "Optional lightweight map connecting app business features to module paths, testing instructions, domain keywords, and Maestro navigation helpers. Downstream blast radius is computed live by guard-blast rather than hardcoded here.",
+  "features": {
+    "example-checkout-payment": {
+      "description": "Order summary, promo/voucher entry, payment method selection, and order submission.",
+      "instruction": "Requires signed-in account with >= 1 item in cart; verify total updates before tapping Pay.",
+      "keywords": ["checkout", "voucher", "promo", "payment", "place order"],
+      "code_paths": ["feature/checkout/", "ui/payment/"],
+      "nav": ".maestro/_shared/_nav-checkout.yaml"
+    },
+    "example-order-list": {
+      "description": "Displays customer order history with status filter chips and pull-to-refresh.",
+      "instruction": "Reset active status filter via idempotent when-guard before asserting full order list.",
+      "keywords": ["orders", "order history", "filter", "status"],
+      "code_paths": ["feature/orders/"],
+      "nav": ".maestro/_shared/_nav-orders.yaml"
+    }
+  }
+}

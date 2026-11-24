@@ -46,7 +46,10 @@ recorded phase. Never redo a passed gate.
 3. Reproduce on device (**Clean-Context Subagent** when not inside a `flow-queue` worker; inline fallback otherwise):
    a. Write the repro line as the first bullet of **Acceptance** in `plans/<TICKET>/flow-bug.md`
       (the ticket's steps → its **expected** result).
-   b. **Prove & Freeze Repro Flow:** delegate to **1 ephemeral clean-context test subagent** (scoped strictly to `.maestro/**` + Maestro MCP / `validate-flow.py` / `suite-runner.py`; pass only ticket ID, repro AC bullet, and `.maestro/<TICKET>/` path) to run `test-author` (Prove-First via Maestro MCP `inspect_screen` + batched `run`, never `adb shell uiautomator dump`, then freeze `.maestro/<TICKET>/.../ac-01-repro.yaml` and validate with `validate-flow.py`). The flow asserts the **expected** behaviour, so it fails today (reproduced) and will pass after the fix.
+   b. **Lookup Existing YAML First (Zero-MCP Reuse Check):** Before invoking MCP, run `python3 skills/test-author/scripts/yaml_index.py --files <Files this fix touches> --query "<bug keywords>"` to find existing cross-ticket flows, `nav` helpers, and feature `instruction`s (if `.maestro/feature-map.json` exists):
+      - **Exact match:** Run the matching YAML directly via `test-runner` (`-m repro`) with 0 MCP authoring.
+      - **Partial match (same screen/entry, new bug branch):** Clone the existing flow's setup/nav/selectors into `.maestro/<TICKET>/.../ac-01-repro.yaml` and only use Maestro MCP for the new steps (**never** overwrite an existing happy-path YAML).
+      - **No match:** Use any discovered `nav`/`instruction` and run `test-author` via **1 ephemeral clean-context test subagent** (scoped strictly to `.maestro/**` + Maestro MCP / `validate-flow.py` / `suite-runner.py`; pass only ticket ID, repro AC bullet, matched hints, and `.maestro/<TICKET>/` path) to prove live and freeze `.maestro/<TICKET>/.../ac-01-repro.yaml` + `validate-flow.py`. The flow asserts the **expected** behaviour, so it fails today (reproduced) and will pass after the fix.
    c. *(Optional re-check if flow already existed)*: run `test-runner` with `-m repro`:
       `python3 skills/test-runner/scripts/suite-runner.py plans/<TICKET>/flow-bug.md -m repro`
       *(block-waits for external Terminal summary — never poll `progress.log`; read `debug/digest_*.md` on failure).*
@@ -60,7 +63,7 @@ recorded phase. Never redo a passed gate.
 5. Blast radius + regression (Full only): invoke `guard-blast` (Mode 2: Bug Fix Blast Radius & Regression Guard) using the `test-hunter` DIAGNOSIS:
    a. Map the 3 perimeters: **Direct Impact (strict Allowlist)**, **Downstream Impact (consumers/dependent screens)**, and **Explicit Non-Impact (perimeter)**.
    b. Derive the 3-Tier Regression Matrix (Tier 1 Repro, Tier 2 Downstream/adjacent flows, Tier 3 Lifecycle/state invariants).
-   c. Write `plans/<TICKET>/regression-plan.md` and append the derived regression lines to **Acceptance** in `plans/<TICKET>/flow-bug.md`.
+   c. Write `plans/<TICKET>/regression-plan.md`, append the derived regression lines to **Acceptance** in `plans/<TICKET>/flow-bug.md`, and emit `plans/<TICKET>/regression.flows` combining `.maestro/<TICKET>/.../ac-01-repro.yaml` with relevant existing cross-ticket flows from `yaml_index.py` (Fast track: repro + at most 1–2 closest existing flows; Full track: `guard-blast` derived flows, reviewed at Gate 1).
 6. Open questions. Classify the planned fix by its shape and run every check whose trigger matches
    (none match → only (a)). Record (b–d) under **Fix-shape checks**.
    a. Always: for each step in the fix path ask "what if this fails / is empty / is duplicated /

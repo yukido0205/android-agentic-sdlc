@@ -371,6 +371,44 @@ def validate_popups_json(path: Path) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+def validate_feature_map_json(path: Path) -> tuple[list[str], list[str]]:
+    """Validate optional .maestro/feature-map.json schema (opt-in; never required)."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return [f"Invalid JSON in {path.name}: {e}"], warnings
+
+    features = data.get("features")
+    if not isinstance(features, dict):
+        return [f"{path.name} must contain a 'features' object."], warnings
+
+    is_template = path.parent.name == "templates"
+    for slug, cfg in features.items():
+        if not isinstance(cfg, dict):
+            errors.append(f"Feature '{slug}' must be a JSON object.")
+            continue
+        for str_key in ("description", "instruction", "nav"):
+            val = cfg.get(str_key)
+            if val is not None and not isinstance(val, str):
+                errors.append(f"Feature '{slug}.{str_key}' must be a string.")
+        for list_key in ("keywords", "code_paths"):
+            val = cfg.get(list_key)
+            if val is not None and (not isinstance(val, list) or not all(isinstance(x, str) for x in val)):
+                errors.append(f"Feature '{slug}.{list_key}' must be a list of strings.")
+        nav = str(cfg.get("nav", "")).strip()
+        if nav and not is_template:
+            nav_path = Path(nav)
+            if not nav_path.is_absolute():
+                repo_cand = (Path.cwd() / nav_path).resolve()
+                rel_cand = (path.parent / nav_path).resolve()
+                if not repo_cand.is_file() and not rel_cand.is_file():
+                    warnings.append(f"Feature '{slug}' references missing nav helper '{nav}'.")
+
+    return errors, warnings
+
+
 def main():
     parser = argparse.ArgumentParser(description="Validate Maestro E2E YAML flows against semantic standards.")
     parser.add_argument("target", help="Path to a YAML file or directory of flows")
@@ -390,16 +428,23 @@ def main():
         print(f"{RED}No .yaml files found in {target_path}{RESET}")
         sys.exit(1)
 
-    # Also validate .maestro/_shared/popups.json if discoverable from target_path
+    # Also validate .maestro/_shared/popups.json and optional .maestro/feature-map.json if discoverable
     popups_files: list[Path] = []
+    feature_map_files: list[Path] = []
     for cand in [target_path / "popups.json", target_path / "_shared" / "popups.json"]:
         if cand.is_file():
             popups_files.append(cand)
+    for cand in [target_path / "feature-map.json", target_path / "_shared" / "feature-map.json"]:
+        if cand.is_file():
+            feature_map_files.append(cand)
     for parent in [target_path, *target_path.parents]:
         if parent.name == ".maestro":
             p = parent / "_shared" / "popups.json"
             if p.is_file() and p not in popups_files:
                 popups_files.append(p)
+            fm = parent / "feature-map.json"
+            if fm.is_file() and fm not in feature_map_files:
+                feature_map_files.append(fm)
             break
 
     print(f"\n{BOLD}{BLUE}==================================================")
@@ -425,6 +470,21 @@ def main():
                 print(f"      {YELLOW}⚠ Warning:{RESET} {wrn}")
         else:
             print(f"{GREEN}PASS{RESET}  {pf}")
+
+    for fm in feature_map_files:
+        fm_errors, fm_warnings = validate_feature_map_json(fm)
+        total_errors += len(fm_errors)
+        total_warnings += len(fm_warnings)
+        if fm_errors:
+            print(f"{RED}FAIL{RESET}  {BOLD}{fm}{RESET}")
+            for err in fm_errors:
+                print(f"      {RED}✖ Error:{RESET} {err}")
+        elif fm_warnings:
+            print(f"{YELLOW}WARN{RESET}  {BOLD}{fm}{RESET}")
+            for wrn in fm_warnings:
+                print(f"      {YELLOW}⚠ Warning:{RESET} {wrn}")
+        else:
+            print(f"{GREEN}PASS{RESET}  {fm}")
 
     for f in files:
         rel_path = f.name

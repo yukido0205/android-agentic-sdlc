@@ -613,13 +613,29 @@ def parse_flow_metadata(yaml_path):
 
 
 def find_flows(target_path, filter_pattern=None):
-    """Recursively finds all YAML flows, excluding helper folders like _nav."""
+    """Recursively finds all YAML flows (file, directory, or .flows/.manifest list), excluding helpers like _nav."""
     flows = []
     target = Path(target_path)
     
     if target.is_file():
         if target.suffix in (".yaml", ".yml"):
             flows.append(str(target.resolve()))
+        elif target.suffix in (".flows", ".manifest"):
+            seen_manifest = set()
+            for raw_line in target.read_text(encoding="utf-8", errors="ignore").splitlines():
+                entry = raw_line.strip()
+                if not entry or entry.startswith("#"):
+                    continue
+                cand = Path(entry)
+                if not cand.is_file():
+                    cand = target.parent / entry
+                if cand.is_file() and cand.suffix in (".yaml", ".yml"):
+                    resolved = str(cand.resolve())
+                    if resolved not in seen_manifest:
+                        seen_manifest.add(resolved)
+                        flows.append(resolved)
+                else:
+                    print(f"⚠️  Skipping missing manifest entry '{entry}' in {target}", flush=True)
     elif target.is_dir():
         for p in sorted(target.rglob("*.yaml")):
             if "_nav" in p.parts or p.name.startswith("_"):
@@ -1972,16 +1988,20 @@ def main():
     print(f"   • Install:   {install_label}")
     print("=" * 70)
 
-    # Smart target resolution (e.g. plans/<TICKET>/REGRESSION.md -> .maestro/<TICKET>/regression)
+    # Smart target resolution (e.g. plans/<TICKET>/flow-bug.md -> plans/<TICKET>/regression.flows or .maestro/<TICKET>)
     target_str = args.target
     p_target = Path(target_str)
     if p_target.suffix == ".md" or "plans" in p_target.parts or re.match(r"^[A-Z]+-\d+$", target_str, re.IGNORECASE):
         m_epic = re.search(r"([A-Z]+-\d+)", target_str, re.IGNORECASE)
         if m_epic:
             epic_code = m_epic.group(1).upper()
+            cand_manifest = Path(f"plans/{epic_code}/regression.flows")
             cand_reg = Path(f".maestro/{epic_code}/regression")
             cand_epic = Path(f".maestro/{epic_code}")
-            if "regression" in target_str.lower() and cand_reg.exists():
+            if (mode == "regression" or "regression" in target_str.lower()) and cand_manifest.is_file():
+                target_str = str(cand_manifest)
+                print(f"💡 Resolved plan target to cross-ticket regression manifest: {target_str}")
+            elif "regression" in target_str.lower() and cand_reg.exists():
                 target_str = str(cand_reg)
                 print(f"💡 Resolved plan target to regression suite: {target_str}")
             elif cand_epic.exists():

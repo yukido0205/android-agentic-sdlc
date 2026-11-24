@@ -1,4 +1,5 @@
 # ac-01-<slug>.yaml
+# Feature: <feature-slug>
 # Acceptance Criteria: AC-01 <Description of criterion from PRD/plan>
 # Account Requirement: <optional — e.g. signed-in account with seeded list items>
 # Target App: com.example.app

@@ -41,7 +41,7 @@ Phase: 1|2|3|4|5   Gate passed: 0|1|2|3   Track: fast|sliced   Step: 1/1 (or 1/2
    - **Iron Rule:** Never invent duplicate abstractions or new wrapper interfaces when existing signatures suffice.
 3. **Blast Radius & Scope Lock (via `guard-blast`):**
    - **🟢 Direct Impact (Strict Allowlist):** 2–5 files directly created or modified. Any file outside this list fails the scope check.
-   - **🟡 Downstream Impact (Consumers):** Adjacent screens/observers that consume modified state/classes.
+   - **🟡 Downstream Impact (Consumers):** Adjacent screens/observers that consume modified state/classes. Check existing cross-ticket YAML coverage via `python3 skills/test-author/scripts/yaml_index.py --files <allowlist_and_downstream>` (and optionally record new feature metadata in `.maestro/feature-map.json` if the repo uses it).
    - **🔴 Explicit Non-Impact:** Unrelated modules strictly forbidden from refactoring.
 4. **Acceptance & Anomaly Triangle:**
    - Happy path is a 1-line formula: `[Current State] + [Event] -> [Target State]`.
@@ -91,7 +91,7 @@ Repeat until a round keeps no finding (max 3 rounds):
      - *Strict subagent scope:* may only read/write `.maestro/**` and run Maestro MCP / `validate-flow.py` / `suite-runner.py`. **Never touch production source files** (return genuine `ASSERTION_FAILED` / `APP_CRASH_OR_ANR` failures to the main agent with `debug/digest_*.md` + `issues/NN-*.md` paths).
      - *Inline fallback:* if already running inside a `flow-queue` worker / nested subagent (e.g., `.worktrees/<TICKET>` where subagent nesting is unavailable), execute the exact same steps inline.
    - **First pass (no frozen flows yet):** Prove ACs live via `test-author` (Maestro MCP `inspect_screen` at most once per new screen + batched `run`; never `adb shell uiautomator dump`), register any random app overlays in `.maestro/_shared/popups.json`, freeze standalone `.maestro/<TICKET>/.../ac-NN-<slug>.yaml` flows, and validate with `validate-flow.py`. (Do not re-run `suite-runner.py` in the same round if ACs just passed via MCP.)
-   - **Re-runs / subsequent rounds / regression:** Execute frozen flows via `test-runner` with `--install`:
+   - **Re-runs / subsequent rounds / regression:** Execute frozen flows via `test-runner` with `--install` (or pass `plans/<TICKET>/regression.flows` when including cross-ticket downstream flows discovered via `yaml_index.py`):
      ```bash
      python3 skills/test-runner/scripts/suite-runner.py .maestro/<TICKET>/ -m step --install
      ```

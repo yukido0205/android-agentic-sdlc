@@ -70,11 +70,11 @@ Derive concrete test scenarios from the blast radius, categorized into 3 tiers:
 | **Tier 3: Invariant** | AC-04: Lifecycle / Process Death | Affected feature | E2E / Negative Control | Verifies state restoration after recreation or back navigation. |
 ```
 
-### 4. Output: `plans/<TICKET>/regression-plan.md`
+### 4. Output: `plans/<TICKET>/regression-plan.md` (and optional `regression.flows`)
 Generate the artifact containing:
 1. **Summary of Fix Delta & Classification**
 2. **Blast Radius Table** (Direct Allowlist, Downstream Consumers, Explicit Non-Impact)
-3. **Regression Matrix** (AC-01 through AC-n)
+3. **Regression Matrix** (AC-01 through AC-n) — run `python3 skills/test-author/scripts/yaml_index.py --files <allowlist_and_downstream> --out-manifest plans/<TICKET>/regression.flows` when `.maestro/` has existing cross-ticket flows to link concrete YAML paths into Tier 2 regression (keep list focused for Gate 1 review).
 4. **Gate 1 Briefing Lines** (Concise 3–4 bullet summary for human review at Gate 1)
 
 ---
